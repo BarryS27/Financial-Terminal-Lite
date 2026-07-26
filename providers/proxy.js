@@ -1,5 +1,4 @@
 // providers/proxy.js — Captain Proxy Manager
-// Bug fix: default color changed from invalid 3-digit '#9ce' to valid '#99ccee'
 
 import { register } from '../core/registry.js';
 import { get, set } from '../core/storage.js';
@@ -40,10 +39,14 @@ async function buildPAC(profile) {
       case 'wildcard':   return `  if(shExpMatch(host,${pat})||shExpMatch(url,${pat}))return ${s};`;
       case 'urlwildcard':return `  if(shExpMatch(url,${pat}))return ${s};`;
       case 'regex': {
-        const m = (r.pattern || '').match(/^\/(.+)\/([gimsuy]*)$/);
-        const src = JSON.stringify(m ? m[1] : r.pattern);
-        const flg = JSON.stringify(m ? m[2] : '');
-        return `  if(new RegExp(${src},${flg}).test(url))return ${s};`;
+        // FIX: validate regex before embedding; fall back to no-op on invalid pattern.
+        const m   = (r.pattern || '').match(/^\/(.+)\/([gimsuy]*)$/);
+        const raw = m ? m[1] : r.pattern || '';
+        const flg = (m ? m[2] : '').replace(/[^gimsuy]/g, ''); // strip invalid flags
+        try { new RegExp(raw, flg); } catch { return '  /* invalid regex — skipped */'; }
+        const src = JSON.stringify(raw);
+        const fg  = JSON.stringify(flg);
+        return `  if(new RegExp(${src},${fg}).test(url))return ${s};`;
       }
       default: return '';
     }
@@ -105,7 +108,6 @@ export async function init() {
       const ps = await loadCustom();
       if (BUILTINS.some(b => b.name === name) || ps.some(p => p.name === name))
         throw new Error('Name already exists');
-      // Bug fix: use 6-digit hex '#99ccee' instead of '#9ce'
       const p = { name, color: '#99ccee', type: 'fixed', protocol: 'http', host: '', port: 8080,
         bypass: ['localhost', '127.0.0.1'], ...profile };
       ps.push(p); await saveCustom(ps); return p;
@@ -148,11 +150,9 @@ export const handlers = {
   'proxy:active': async ()    => { const name = await loadActive(); return { ok: true, name, profile: await findProfile(name) }; },
   'proxy:switch': async msg   => { await apply(msg.name); return { ok: true, active: msg.name }; },
   'proxy:create': async msg   => {
-    try { const p = await expose('proxy', undefined) || {}; } catch {}
     const ps = await loadCustom();
     if (BUILTINS.some(b => b.name === msg.name) || ps.some(p => p.name === msg.name))
       return { ok: false, error: 'Name already exists' };
-    // Bug fix: '#99ccee' not '#9ce'
     const p = { name: msg.name, color: '#99ccee', type: 'fixed', protocol: 'http', host: '', port: 8080,
       bypass: ['localhost', '127.0.0.1'], ...msg.profile };
     ps.push(p); await saveCustom(ps); return { ok: true, profile: p };

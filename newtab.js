@@ -1,9 +1,13 @@
 // newtab.js — new-tab palette host for restricted pages
 // Opens when the user triggers Captain on a chrome:// or extension:// page.
 
-const frame = document.getElementById('palette-frame');
+const frame = document.createElement('iframe');
 frame.src = chrome.runtime.getURL('content/overlay-inner.html');
-frame.style.display = 'block';
+Object.assign(frame.style, {
+  position: 'fixed', inset: '0', width: '100%', height: '100%',
+  border: 'none', zIndex: '2147483647', background: 'transparent',
+});
+document.body.appendChild(frame);
 
 const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL('')).origin;
 let _ready = false;

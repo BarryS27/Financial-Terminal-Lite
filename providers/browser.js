@@ -33,10 +33,14 @@ async function bookmarkProvider(q) {
 
 async function historyProvider(q) {
   const items = q
-    ? await chrome.history.search({ text: q, maxResults: 20, startTime: 0 })
-    : await chrome.history.search({ text: '', maxResults: 15, startTime: 0 });
-  return items.map(h => ({ id: `hist:${h.id}`, title: h.title || h.url,
-                            desc: hostname(h.url) || 'History', emoji: '🏛', type: 'history', url: h.url }));
+    ? await chrome.history.search({ text: q, maxResults: 40, startTime: 0 })
+    : await chrome.history.search({ text: '', maxResults: 30, startTime: 0 });
+  const seen = new Set();
+  return items
+    .filter(h => { if (!h.url || seen.has(h.url)) return false; seen.add(h.url); return true; })
+    .slice(0, 20)
+    .map(h => ({ id: `hist:${h.id}`, title: h.title || h.url,
+                 desc: hostname(h.url) || 'History', emoji: '🏛', type: 'history', url: h.url }));
 }
 
 // act:* — desc omitted where it just rephrases the title (saves ~800 B raw)
@@ -154,7 +158,7 @@ export const handlers = {
   },
 
   'browser:remove': async (msg) => {
-    if (msg.itemType === 'bookmark') await chrome.bookmarks.remove(msg.id).catch(() => {});
+    if (msg.itemType === 'bookmark') await chrome.bookmarks.remove(String(msg.id)).catch(() => {});
     else if (msg.itemType === 'tab') await chrome.tabs.remove(msg.tabId).catch(() => {});
     return { ok: true };
   },
@@ -172,14 +176,12 @@ export const handlers = {
     if (!restricted) {
       const sent = await chrome.tabs.sendMessage(tab.id, { type: 'captain:open' }).then(() => true).catch(() => false);
       if (!sent) {
-        // Check sentinel before injecting to avoid duplicate-declaration SyntaxErrors
         const res = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => !!window.__captainOverlayLoaded,
         }).catch(() => [{ result: false }]);
         if (!res?.[0]?.result) {
           await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/overlay.js'] }).catch(() => {});
-          await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content/overlay.css'] }).catch(() => {});
         }
         setTimeout(() => chrome.tabs.sendMessage(tab.id, { type: 'captain:open' }).catch(() => {}), 80);
       }

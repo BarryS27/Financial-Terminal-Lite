@@ -36,3 +36,6 @@ document.getElementById('btn-cancel').addEventListener('click', () => {
   clearInterval(timer);
   chrome.runtime.sendMessage({ type: 'fg:close' });
 });
+
+window.addEventListener('pagehide', () => { clearInterval(timer); timer = null; });
+window.addEventListener('beforeunload', () => { clearInterval(timer); timer = null; });

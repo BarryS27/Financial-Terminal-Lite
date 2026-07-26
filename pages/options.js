@@ -3,11 +3,12 @@
 
 // ── Nav ───────────────────────────────────────────────────────────────────────
 const hash = location.hash.replace('#', '');
+const _defaultPanel = document.querySelector('.nav-item[data-panel]')?.dataset?.panel;
 document.querySelectorAll('.nav-item[data-panel]').forEach(btn => {
-  if (hash && btn.dataset.panel === hash) activate(btn.dataset.panel);
   btn.addEventListener('mousedown', e => e.preventDefault());
   btn.addEventListener('click', () => activate(btn.dataset.panel));
 });
+activate(hash || _defaultPanel || '');
 
 function activate(id) {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.panel === id));
@@ -228,21 +229,6 @@ document.getElementById('fg-save').addEventListener('click', async () => {
 });
 loadFocusGuard();
 
-// ── Search filter (Blacklist) ──────────────────────────────────────────────────
-async function loadBL() {
-  const res = await chrome.runtime.sendMessage({ type: 'bl:get' }).catch(() => null);
-  if (!res?.ok) return;
-  document.getElementById('bl-enabled').checked = !!res.enabled;
-  document.getElementById('bl-rules').value     = (res.rules || []).join('\n');
-}
-document.getElementById('bl-save').addEventListener('click', async () => {
-  const enabled = document.getElementById('bl-enabled').checked;
-  const rules   = document.getElementById('bl-rules').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const res = await chrome.runtime.sendMessage({ type: 'bl:set', enabled, rules });
-  setStatus('bl-status', res?.ok ? 'Saved. ✓' : 'Error.', !res?.ok);
-});
-loadBL();
-
 // ── Tab Sleep ─────────────────────────────────────────────────────────────────
 async function loadTabDiscard() {
   const res = await chrome.runtime.sendMessage({ type: 'tab-discard:get-prefs' });
@@ -334,50 +320,6 @@ document.getElementById('ws-add').addEventListener('click', async () => {
 });
 loadWorkspaces();
 
-// ── Annotations ───────────────────────────────────────────────────────────────
-async function loadAnnotations() {
-  const all  = await chrome.storage.local.get('c.annotate.all');
-  const data = all['c.annotate.all'] || {};
-  const anns = Object.values(data).flat();
-  const list = document.getElementById('ann-list');
-  if (!anns.length) {
-    list.innerHTML = '<div class="item-row"><div class="item-row-sub">No annotations yet. Select text on any page to start.</div></div>';
-    return;
-  }
-  list.innerHTML = anns.slice(0, 60).map(a => {
-    let host = '';
-    try { host = new URL(a.url||'').hostname; } catch {}
-    return `<div class="item-row">
-      <div style="width:8px;height:8px;border-radius:50%;background:${esc(a.color?.replace(/[^#0-9a-f]/gi,'')||'#ffee00')};flex-shrink:0;margin-top:4px"></div>
-      <div class="item-row-main">
-        <div class="item-row-title">${esc((a.selectedText||'').slice(0,80))}${(a.selectedText||'').length>80?'…':''}</div>
-        <div class="item-row-sub">${esc(host)}${a.note?` · ${esc(a.note.slice(0,60))}`:''}</div>
-      </div>
-    </div>`;
-  }).join('');
-}
-document.getElementById('ann-set-folder').addEventListener('click', async () => {
-  try {
-    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    const db = await new Promise((res,rej) => {
-      const r = indexedDB.open('captain-annotate',1);
-      r.onupgradeneeded = e => e.target.result.createObjectStore('handles');
-      r.onsuccess = e => res(e.target.result);
-      r.onerror   = e => rej(e.target.error);
-    });
-    await new Promise((res,rej) => {
-      const tx = db.transaction('handles','readwrite');
-      tx.objectStore('handles').put(handle,'export-folder');
-      tx.oncomplete=res; tx.onerror=rej;
-    });
-    setStatus('ann-status', `Export folder: ${handle.name} ✓`);
-  } catch(e) { setStatus('ann-status', String(e), true); }
-});
-document.getElementById('ann-clear-all').addEventListener('click', async () => {
-  if (!confirm('Delete all annotations? This cannot be undone.')) return;
-  await chrome.storage.local.remove('c.annotate.all');
-  setStatus('ann-status', 'All annotations deleted.');
-  loadAnnotations();
 });
 loadAnnotations();
 
@@ -423,20 +365,21 @@ document.getElementById('ai-open-chat').addEventListener('click', async () => {
 });
 loadAI();
 
-// ── Annotation trigger preference ─────────────────────────────────────────────
-async function loadAnnotateTrigger() {
-  const r = await chrome.storage.local.get('c.annotate.trigger');
-  const val = r['c.annotate.trigger'] || 'contextmenu';
-  document.getElementById('ann-trigger').value = val;
-  document.getElementById('ann-selectionbar-note').style.display =
-    val === 'selectionbar' ? '' : 'none';
+
+// ── Search filter (merged into Focus Guard) ───────────────────────────────────
+async function loadBlRules() {
+  const res = await chrome.runtime.sendMessage({ type: 'bl:get-rules' });
+  const rules = res?.rules || '';
+  document.getElementById('bl-rules').value = rules;
+  // infer enabled from whether rules exist
+  document.getElementById('bl-enabled').checked = rules.trim().length > 0;
 }
 
-document.getElementById('ann-trigger').addEventListener('change', async function () {
-  await chrome.storage.local.set({ 'c.annotate.trigger': this.value });
-  document.getElementById('ann-selectionbar-note').style.display =
-    this.value === 'selectionbar' ? '' : 'none';
-  setStatus('ann-status', 'Saved. ✓');
+document.getElementById('bl-save')?.addEventListener('click', async () => {
+  const rules = document.getElementById('bl-rules').value;
+  const res   = await chrome.runtime.sendMessage({ type: 'bl:set-rules', rules });
+  setStatus('bl-status', res?.ok ? 'Saved. ✓' : 'Error.', !res?.ok);
 });
 
-loadAnnotateTrigger();
+loadBlRules();
+

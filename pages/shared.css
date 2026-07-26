@@ -10,8 +10,8 @@
   --color-text:       oklch(28%   0.008 260);
   --color-accent:     oklch(52%   0.18  220);
   --color-accent-dim: oklch(96%   0.04  220);
-  --glass-bg:         rgba(255, 255, 255, 0.72);
-  --glass-border:     rgba(255, 255, 255, 0.50);
+  --glass-bg:         oklch(98.5% 0.003 240);
+  --glass-border:     oklch(82% 0.006 240);
   --shadow-sm: 0 1px 3px oklch(0% 0 0 / 0.05);
   --shadow-md: 0 3px 12px oklch(0% 0 0 / 0.08), 0 1px 3px oklch(0% 0 0 / 0.04);
   --shadow-lg: 0 8px 32px oklch(0% 0 0 / 0.10), 0 2px 8px oklch(0% 0 0 / 0.05);
@@ -45,11 +45,11 @@
     --color-text:       oklch(88%  0.008 260);
     --color-accent:     oklch(60%  0.16  220);
     --color-accent-dim: oklch(18%  0.06  220);
-    --glass-bg:         rgba(22, 22, 26, 0.75);
-    --glass-border:     rgba(255, 255, 255, 0.09);
+    --glass-bg:         oklch(14% 0.004 240);
+    --glass-border:     oklch(28% 0.006 240);
     --shadow-sm: 0 1px 3px oklch(0% 0 0 / 0.025);
     --shadow-md: 0 3px 12px oklch(0% 0 0 / 0.04), 0 1px 3px oklch(0% 0 0 / 0.02);
-    --shadow-lg: 0 8px 32px oklch(0% 0 0 / 0.05), 0 2px 8px oklch(0% 0 0 / 0.025);
+    --shadow-lg: 0 0 0 1px oklch(100% 0 0 / 0.06), 0 16px 48px oklch(0% 0 0 / 0.55), 0 4px 14px oklch(0% 0 0 / 0.30);
   }
 }
 

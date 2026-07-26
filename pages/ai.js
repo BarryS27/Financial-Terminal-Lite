@@ -1,6 +1,7 @@
 'use strict';
-'use strict';
-const CONV_ID = 'main';
+const _persistedId = sessionStorage.getItem('captain-ai-conv-id');
+const CONV_ID = _persistedId || ('conv_' + Date.now());
+if (!_persistedId) sessionStorage.setItem('captain-ai-conv-id', CONV_ID);
 let _streaming = false;
 let _config = null;
 

@@ -2,40 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Captain</title>
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body {
-  width: 100%; height: 100%;
-  background: oklch(98.5% 0.003 260);
-  display: flex; align-items: center; justify-content: center;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-@media (prefers-color-scheme: dark) {
-  html, body { background: oklch(11% 0.003 260); }
-}
-iframe {
-  position: fixed; inset: 0;
-  width: 100%; height: 100%;
-  border: none; background: transparent;
-  z-index: 1;
-  display: none;
-}
-#msg {
-  color: oklch(60% 0.008 260);
-  font-size: 0.875rem;
-  letter-spacing: 0.02em;
-  opacity: 0;
-  animation: fade 400ms 200ms both;
-}
-@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #111; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #e8e8e8;
+  }
+  #msg { text-align: center; opacity: .6; font-size: 14px; }
 </style>
 </head>
 <body>
 <div id="msg">Opening Captain…</div>
-<iframe id="palette-frame"></iframe>
-<script src="newtab.js"></script>
+<script type="module" src="newtab.js"></script>
 </body>
 </html>

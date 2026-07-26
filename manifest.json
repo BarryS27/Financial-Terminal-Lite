@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Captain",
-  "version": "1.0.0",
-  "description": "One helm, open seas. Proxy, privacy, focus, vault, AI, and tab control \u2014 unified.",
+  "version": "0.3.0",
+  "description": "One helm, open seas. Proxy, privacy, focus, vault, AI, and tab control — unified.",
   "permissions": [
     "tabs",
     "activeTab",
@@ -36,13 +36,15 @@
     "default_icon": {
       "16": "assets/icon16.png",
       "48": "assets/icon48.png",
-      "128": "assets/icon128.png"
+      "128": "assets/icon128.png",
+      "32": "assets/icon32.png"
     }
   },
   "icons": {
     "16": "assets/icon16.png",
     "48": "assets/icon48.png",
-    "128": "assets/icon128.png"
+    "128": "assets/icon128.png",
+    "32": "assets/icon32.png"
   },
   "commands": {
     "open-captain": {
@@ -53,57 +55,49 @@
       "description": "Open Captain command palette"
     }
   },
-  "content_scripts": [
-    {
-      "js": [
-        "content/overlay.js"
-      ],
-      "css": [
-        "content/overlay.css"
-      ],
-      "matches": [
-        "<all_urls>"
-      ],
-      "run_at": "document_end"
-    },
-    {
-      "js": [
-        "content/guard.js"
-      ],
-      "matches": [
-        "<all_urls>"
-      ],
-      "run_at": "document_start"
-    },
-    {
-      "js": [
-        "content/annotate.js"
-      ],
-      "matches": [
-        "<all_urls>"
-      ],
-      "run_at": "document_end"
-    }
-  ],
+  "content_scripts": [],
   "options_ui": {
     "page": "pages/options.html",
     "open_in_tab": true
   },
   "web_accessible_resources": [
     {
-      "matches": [
-        "<all_urls>"
-      ],
+      "matches": ["<all_urls>"],
       "resources": [
-        "assets/*",
         "content/overlay.css",
         "content/overlay-inner.html",
         "content/overlay-inner.js",
-        "inject/*",
-        "pages/*",
+        "inject/ua-spoof.js",
+        "inject/webrtc-block.js"
+      ]
+    },
+    {
+      "matches": ["chrome-extension://*/*"],
+      "resources": [
+        "assets/*",
+        "assets/fonts/*",
         "ticker.html",
-        "ticker.js",
-        "assets/fonts/*"
+        "ticker.js"
+      ]
+    },
+    {
+      "matches": ["chrome-extension://*/*"],
+      "resources": [
+        "pages/blocked.html",
+        "pages/blocked.js",
+        "pages/delayed.html",
+        "pages/delayed.js",
+        "pages/lockdown.html",
+        "pages/lockdown.js",
+        "pages/options.html",
+        "pages/options.js",
+        "pages/password.html",
+        "pages/password.js",
+        "pages/shared.css",
+        "pages/vault.html",
+        "pages/vault.js",
+        "pages/ai.html",
+        "pages/ai.js"
       ]
     }
   ]

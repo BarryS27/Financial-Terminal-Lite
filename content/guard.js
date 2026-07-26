@@ -17,7 +17,6 @@ function safeSend(msg, respond) {
   }
 }
 
-// Bug 10 fix: null out references after removal so they can't be re-appended
 let gTimer = null;
 let gAlert = null;
 
@@ -105,6 +104,12 @@ chrome.runtime.onMessage.addListener((msg, _, respond) => {
     case 'fg:ping':
       safeSend({ type: 'fg:loaded', url: document.URL });
       break;
+    case 'captain:webrtc-policy':
+    case 'webrtc:apply-inject': {
+      // These are handled by inject/webrtc-block.js in MAIN world;
+      // guard just needs to NOT swallow them — pass through.
+      break;
+    }
     case 'captain:scroll':
       if      (msg.dir === 'top')    window.scrollTo({ top: 0,                          behavior: 'smooth' });
       else if (msg.dir === 'bottom') window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -142,7 +147,8 @@ timerStyle.textContent = `
 document.documentElement.appendChild(timerStyle);
 
 // ── SERP filter (Google only) ─────────────────────────────────────────────────
-if (/^https:\/\/www\.google\.[^/]+\/search/.test(location.href)) {
+const _isExtensionPage = location.protocol === 'chrome-extension:' || location.protocol === 'moz-extension:';
+if (!_isExtensionPage && /^https:\/\/www\.google\.[^/]+\/search/.test(location.href)) {
   initSerpFilter();
 }
 

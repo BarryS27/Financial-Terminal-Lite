@@ -44,6 +44,11 @@ async function shouldDiscard(tab, prefs) {
   if (tab.audible && !prefs.audible) return false;
   if (!tab.url?.startsWith('http')) return false;
   if (matchesWhitelist(tab.url, prefs.whitelist)) return false;
+  // onIdle fix: only discard when the browser is idle if the user opted in
+  if (prefs.onIdle && chrome.idle) {
+    const state = await chrome.idle.queryState(prefs.idleTimeout);
+    if (state !== 'idle') return false;
+  }
   return true;
 }
 

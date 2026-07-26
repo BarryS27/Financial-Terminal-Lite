@@ -5,38 +5,45 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Captain</title>
 <style>
-/* ── ACDN Token Layer ─────────────────────────────────────────── */
-
+/* ── ACDN Token Layer — Captain v3 Precision/Control Theme ─────────────────── */
 :root {
-  --color-bg:         oklch(98.5% 0.003 260);
-  --color-surface:    oklch(95%   0.004 260);
-  --color-border:     oklch(88%   0.005 260);
-  --color-text-muted: oklch(60%   0.008 260);
-  --color-text:       oklch(28%   0.008 260);
-  --color-accent:     oklch(52%   0.18  220);
-  --color-accent-dim: oklch(96%   0.04  220);
-  --glass-bg:         rgba(255, 255, 255, 0.72);
-  --glass-border:     rgba(255, 255, 255, 0.50);
-  --shadow-lg: 0 8px 32px oklch(0% 0 0 / 0.10), 0 2px 8px oklch(0% 0 0 / 0.05);
+  /* Light mode: cool near-white, tight chroma */
+  --color-bg:          oklch(97%   0.003 240);
+  --color-surface:     oklch(93%   0.004 240);
+  --color-border:      oklch(82%   0.006 240);
+  --color-text:        oklch(22%   0.010 240);
+  --color-text-muted:  oklch(52%   0.008 240);
+  --color-accent:      oklch(48%   0.20  220);
+  --color-accent-dim:  oklch(94%   0.06  220);
+  --color-danger:      oklch(52%   0.20  15);
+
+  /* Precision shell — no frosted softness, use crisp borders + shadow depth */
+  --palette-bg:        oklch(98%   0.002 240);
+  --palette-border:    oklch(78%   0.008 240);
+  --shadow-lg: 0 0 0 1px oklch(0% 0 0 / 0.08), 0 12px 40px oklch(0% 0 0 / 0.14), 0 4px 12px oklch(0% 0 0 / 0.06);
+
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg:         oklch(11%  0.003 260);
-    --color-surface:    oklch(16%  0.004 260);
-    --color-border:     oklch(24%  0.005 260);
-    --color-text-muted: oklch(60%  0.008 260);
-    --color-text:       oklch(88%  0.008 260);
-    --color-accent:     oklch(60%  0.16  220);
-    --color-accent-dim: oklch(18%  0.06  220);
-    --glass-bg:         rgba(22, 22, 26, 0.75);
-    --glass-border:     rgba(255, 255, 255, 0.09);
-    --shadow-lg: 0 8px 40px oklch(0% 0 0 / 0.40), 0 2px 8px oklch(0% 0 0 / 0.20);
+    --color-bg:          oklch(12%   0.004 240);
+    --color-surface:     oklch(17%   0.005 240);
+    --color-border:      oklch(26%   0.006 240);
+    --color-text:        oklch(90%   0.008 240);
+    --color-text-muted:  oklch(56%   0.008 240);
+    --color-accent:      oklch(62%   0.18  220);
+    --color-accent-dim:  oklch(20%   0.07  220);
+    --color-danger:      oklch(62%   0.20  15);
+
+    --palette-bg:        oklch(14%   0.004 240);
+    --palette-border:    oklch(28%   0.006 240);
+    --shadow-lg: 0 0 0 1px oklch(100% 0 0 / 0.06), 0 16px 48px oklch(0% 0 0 / 0.55), 0 4px 14px oklch(0% 0 0 / 0.30);
   }
 }
 
-/* ── Reset ────────────────────────────────────────────────────── */
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -47,103 +54,87 @@ html, body {
   color: var(--color-text);
 }
 
-::selection { background: oklch(52% 0.18 220 / 0.15); color: inherit; }
+::selection { background: oklch(48% 0.20 220 / 0.18); color: inherit; }
 
-/* ── Backdrop ─────────────────────────────────────────────────── */
+/* ── Backdrop — tight, not dreamy ───────────────────────────────────────────── */
 #backdrop {
   position: fixed; inset: 0;
-  /* ACDN glass-deep: oklch directional lights — for modal-level surfaces */
-  background: oklch(0% 0 0 / 0.30);
-  backdrop-filter: blur(6px) saturate(120%);
-  -webkit-backdrop-filter: blur(6px) saturate(120%);
+  background: oklch(0% 0 0 / 0.40);
+  /* No backdrop blur — clarity over aesthetics in control UIs */
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 13vh;
+  padding-top: 12vh;
 }
 
-/* ── Palette shell — ACDN glass-elevated ─────────────────────── */
+/* ── Palette shell — ACDN $glass-none: sharp, bordered panel ───────────────── */
 #palette {
   width: 620px;
   max-width: calc(100vw - 32px);
-  /* ACDN glass-elevated mixin */
-  background-color: var(--glass-bg);
-  backdrop-filter: blur(24px) saturate(180%) brightness(1.02);
-  -webkit-backdrop-filter: blur(24px) saturate(180%) brightness(1.02);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0  1px 0 oklch(100% 0 0 / 0.22),
-    inset 0 -1px 0 oklch(0%   0 0 / 0.05),
-    var(--shadow-lg);
-  border-radius: 12px; /* ACDN $radius-lg */
+  background: var(--palette-bg);
+  border: 1px solid var(--palette-border);
+  border-radius: 8px;   /* ACDN $radius-md: tighter than glass-elevated 12px */
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  max-height: 68vh;
-  /* ACDN modal-in animation */
-  animation: modal-in 220ms cubic-bezier(0, 0, 0.2, 1) both;
+  max-height: 66vh;
 }
-@media (prefers-color-scheme: dark) {
-  #palette {
-    box-shadow:
-      inset 0  1px 0 oklch(100% 0 0 / 0.10),
-      inset 0 -1px 0 oklch(0%   0 0 / 0.18),
-      var(--shadow-lg);
-  }
-}
+
 @media (prefers-reduced-motion: no-preference) {
-  #palette { animation: modal-in 220ms cubic-bezier(0, 0, 0.2, 1) both; }
+  #palette {
+    animation: panel-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   #palette { animation: none; }
 }
-
-@keyframes modal-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.985); }
-  to   { opacity: 1; transform: translateY(0)    scale(1); }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.992); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
 
-/* ── Search row ───────────────────────────────────────────────── */
+/* ── Search row ─────────────────────────────────────────────────────────────── */
 #search-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 13px 16px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
 #search-icon {
-  width: 16px; height: 16px;
+  width: 15px; height: 15px;
   flex-shrink: 0;
   color: var(--color-text-muted);
-  opacity: 0.7;
+  opacity: 0.65;
 }
 
-/* ACDN filter chip */
+/* ACDN filter chip — uppercase badge style */
 #filter-chip {
   display: none;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px 2px 8px;
-  border-radius: 4px; /* ACDN $radius-sm */
+  padding: 2px 7px 2px 8px;
+  border-radius: 4px;
   border: 1px solid;
-  font-size: 0.75rem; /* ACDN --text-xs */
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
   flex-shrink: 0;
   user-select: none;
-  line-height: 1.2;
+  line-height: 1.3;
 }
 #filter-chip-close {
   cursor: pointer;
-  opacity: 0.6;
+  opacity: 0.55;
   font-size: 10px;
   line-height: 1;
   padding: 0 1px;
-  transition: opacity 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  transition: opacity 100ms ease;
 }
 #filter-chip-close:hover { opacity: 1; }
 
@@ -156,94 +147,101 @@ html, body {
   font-family: var(--font-sans);
   font-size: 0.9375rem;
   font-weight: 400;
-  letter-spacing: 0.01em;
-  caret-color: var(--color-accent); /* ACDN §9.3 */
+  letter-spacing: 0.005em;
+  caret-color: var(--color-accent);
   line-height: 1;
 }
 #search-input::placeholder {
   color: var(--color-text-muted);
-  opacity: 0.55;
+  opacity: 0.50;
 }
 
 #kb-hint {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
   color: var(--color-text-muted);
-  opacity: 0.6;
+  opacity: 0.55;
   white-space: nowrap;
   flex-shrink: 0;
-  letter-spacing: 0.01em;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  user-select: none;
 }
 
-/* ── Results list ─────────────────────────────────────────────── */
+/* ── Results list ───────────────────────────────────────────────────────────── */
 #results {
   overflow-y: auto;
   overscroll-behavior: contain;
-  max-height: calc(68vh - 52px);
-  /* ACDN invisible-until-hover scrollbar */
+  max-height: calc(66vh - 50px);
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
 #results:hover {
   scrollbar-color: var(--color-border) transparent;
 }
-#results::-webkit-scrollbar { width: 5px; }
+#results::-webkit-scrollbar { width: 4px; }
 #results::-webkit-scrollbar-track { background: transparent; }
 #results::-webkit-scrollbar-thumb {
   background: transparent;
   border-radius: 50px;
-  transition: background 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 #results:hover::-webkit-scrollbar-thumb { background: var(--color-border); }
 #results::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
 
-#results:empty::after {
+#results:empty:not([data-loading])::after {
   content: 'No results';
   display: block;
   text-align: center;
   color: var(--color-text-muted);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   padding: 28px;
+  opacity: 0.5;
   font-family: var(--font-sans);
-  opacity: 0.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
-/* ── Section label — ACDN badge-style ────────────────────────── */
+/* ── Section label — ACDN badge-uppercase ───────────────────────────────────── */
 .section-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.07em;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  padding: 10px 16px 4px;
-  font-family: var(--font-sans);
-  opacity: 0.7;
+  padding: 10px 14px 4px;
+  opacity: 0.65;
   user-select: none;
 }
 
-/* ── Result row ───────────────────────────────────────────────── */
+/* ── Result row ─────────────────────────────────────────────────────────────── */
 .result-item {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 8px 16px;
+  gap: 10px;
+  padding: 7px 14px;
   cursor: pointer;
-  /* ACDN tap-effect */
-  transition:
-    background-color 80ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-    transform 80ms cubic-bezier(0.6, 0, 0, 1);
+  transition: background-color 70ms ease;
   position: relative;
+  border-left: 2px solid transparent;
 }
-.result-item:hover   { background: var(--color-surface); }
+.result-item:hover { background: var(--color-surface); }
 .result-item.selected {
-  background: oklch(52% 0.18 220 / 0.07);
+  background: var(--color-accent-dim);
+  border-left-color: var(--color-accent);
 }
 @media (prefers-color-scheme: dark) {
   .result-item.selected {
-    background: oklch(60% 0.16 220 / 0.12);
+    background: oklch(62% 0.18 220 / 0.10);
+    border-left-color: var(--color-accent);
   }
 }
-/* ACDN active scale */
-.result-item:active { transform: scale(0.99); }
+/* ACDN: no scale on active for control UIs — scale implies playfulness */
+.result-item:active { background: var(--color-surface); }
 
 /* Icon */
 .item-icon {
@@ -252,41 +250,39 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
   border-radius: 4px;
-  background: transparent;
 }
 .item-icon img {
-  width: 16px; height: 16px;
+  width: 15px; height: 15px;
   border-radius: 3px;
-  /* ACDN: no border on images, use inset box-shadow */
-  box-shadow: inset 0 0 0 1px oklch(0% 0 0 / 0.08);
+  box-shadow: inset 0 0 0 1px oklch(0% 0 0 / 0.10);
 }
 @media (prefers-color-scheme: dark) {
-  .item-icon img { box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.10); }
+  .item-icon img { box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.12); }
 }
 
 /* Text */
 .item-text { flex: 1; min-width: 0; }
 .item-title {
-  font-size: 0.875rem; /* ACDN --text-sm */
-  font-weight: 400;
+  font-size: 0.8125rem;
+  font-weight: 500;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
 }
 .item-desc {
-  font-size: 0.75rem; /* ACDN --text-xs */
+  font-size: 0.6875rem;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 1px;
   line-height: 1.3;
-  opacity: 0.8;
+  opacity: 0.75;
 }
 .item-desc mark {
   background: var(--color-accent-dim);
@@ -295,22 +291,18 @@ html, body {
   padding: 0 1px;
 }
 
-/* Key badges — ACDN badge style */
-.item-keys {
-  display: flex;
-  gap: 3px;
-  flex-shrink: 0;
-}
+/* Key badges */
+.item-keys { display: flex; gap: 3px; flex-shrink: 0; }
 .key-badge {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   background: transparent;
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
   padding: 1px 5px;
-  border-radius: 4px; /* ACDN $radius-sm */
+  border-radius: 4px;
   font-family: var(--font-sans);
   line-height: 1.4;
   user-select: none;
@@ -322,58 +314,25 @@ html, body {
   opacity: 0;
   flex-shrink: 0;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: opacity 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-              color   120ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  border-radius: 3px;
+  transition: opacity 100ms ease, color 100ms ease;
   cursor: pointer;
 }
-.result-item:hover .item-remove { opacity: 0.7; }
-.item-remove:hover { opacity: 1 !important; color: oklch(50% 0.20 15); }
-
-/* Accent text in desc */
-.item-desc-accent {
-  color: var(--color-accent);
-  font-weight: 500;
-}
-
-/* Selected accent bar — ACDN: single accent visible at once */
-.result-item.selected::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 6px; bottom: 6px;
-  width: 2px;
-  border-radius: 0 2px 2px 0;
-  background: var(--color-accent);
-}
-
-/* ── Filter chip badges in help view ─────────────────────────── */
-.filter-badge {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-radius: 4px;
-  padding: 2px 6px;
-  border: 1px solid;
-  line-height: 1.2;
-  user-select: none;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
+.result-item:hover .item-remove { opacity: 0.6; }
+.item-remove:hover { opacity: 1 !important; color: var(--color-danger); }
 </style>
 </head>
 <body>
 <div id="backdrop">
   <div id="palette" role="dialog" aria-label="Captain command palette">
     <div id="search-row">
-      <!-- ACDN magnifying glass icon -->
       <svg id="search-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" stroke-width="1.4"/>
-        <line x1="9.8" y1="9.8" x2="13.5" y2="13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" stroke-width="1.5"/>
+        <line x1="9.8" y1="9.8" x2="13.5" y2="13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
       </svg>
       <span id="filter-chip"><span id="filter-chip-label"></span><span id="filter-chip-close" aria-label="Clear filter">✕</span></span>
       <input id="search-input" type="text" placeholder='Search or type "/" to filter' autocomplete="off" spellcheck="false" aria-label="Search">

@@ -4,11 +4,10 @@
 
 import { register } from '../core/registry.js';
 import { get, set } from '../core/storage.js';
-import { expose, call, emit } from '../core/bus.js';
+import { expose, emit } from '../core/bus.js';
 
-const KEY_WORKSPACES  = 'c.ws.workspaces';
-const KEY_ACTIVE      = 'c.ws.active';
-const KEY_VISIT_HIST  = 'c.ws.visits';   // { domain -> [{workspace, ts}] }
+const KEY_WORKSPACES = 'c.ws.workspaces';
+const KEY_ACTIVE     = 'c.ws.active';
 
 // ── Default workspaces ────────────────────────────────────────────────────────
 const DEFAULT_WORKSPACES = [
@@ -71,6 +70,13 @@ async function activateWorkspace(id, source = 'manual') {
   if (!ws) throw new Error(`Workspace "${id}" not found`);
 
   await set(KEY_ACTIVE, id);
+
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.windowId) {
+      await chrome.windows.update(tabs[0].windowId, { focused: true }).catch(() => {});
+    }
+  } catch {}
 
   // Apply proxy
   if (ws.proxy) {
@@ -272,7 +278,9 @@ export const handlers = {
   },
   'ws:delete':        async msg => {
     const ws = await loadWorkspaces();
-    const filtered = ws.filter(w => w.id !== msg.id && !w.builtIn);
+    if (ws.find(w => w.id === msg.id)?.builtIn) return { ok: false, error: 'Cannot delete built-in workspace' };
+    const filtered = ws.filter(w => w.id !== msg.id);
+    if (filtered.length === ws.length) return { ok: false, error: 'Workspace not found' };
     await saveWorkspaces(filtered);
     return { ok: true };
   },

@@ -6,7 +6,7 @@
 import { register } from '../core/registry.js';
 import { get, set } from '../core/storage.js';
 
-const MODE_KEY = 'p.webrtc';
+const MODE_KEY = 'c.webrtc';
 const FULL_BLOCK_CS_ID = 'captain-webrtc-full-block';
 
 const MODES = {
@@ -86,7 +86,5 @@ export const handlers = {
     const mode = (await get(MODE_KEY)) ?? 'off';
     return { ok: true, mode };
   },
-  'webrtc:off':     async () => { await applyMode('off');     return { ok: true }; },
-  'webrtc:partial': async () => { await applyMode('partial'); return { ok: true }; },
-  'webrtc:full':    async () => { await applyMode('full');    return { ok: true }; },
+
 };

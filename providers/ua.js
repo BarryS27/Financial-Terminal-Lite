@@ -1,8 +1,8 @@
 import { register } from '../core/registry.js';
 import { get, set } from '../core/storage.js';
 
-const UA_KEY     = 'p.ua.active';
-const CUSTOM_KEY = 'p.ua.custom';
+const UA_KEY     = 'c.ua.active';
+const CUSTOM_KEY = 'c.ua.custom';
 
 function getChromeVersion() {
   try {
@@ -64,7 +64,6 @@ const ALL_RESOURCE_TYPES = [
   'xmlhttprequest','ping','media','websocket','other',
 ];
 
-// Bug 12 fix: buildRules is synchronous — no await needed
 function buildRules(ua, mode, domain) {
   if (!ua) return [];
   const requestHeaders = [{ header: 'User-Agent', operation: 'set', value: ua }];
@@ -87,6 +86,29 @@ async function applyUA(ua, mode, domain) {
   const removeIds  = existing.filter(r => r.id >= RULE_ID_UA && r.id < RULE_ID_UA + 10).map(r => r.id);
   await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: removeIds, addRules: rules });
   await set(UA_KEY, ua ? { ua, mode: mode || 'global', domain } : null);
+
+  if (ua) {
+    try {
+      const tabs = await chrome.tabs.query({});
+      for (const tab of tabs) {
+        if (!tab.url?.startsWith('http')) continue;
+        if (mode === 'domain' && domain) {
+          try { if (!new URL(tab.url).hostname.includes(domain)) continue; } catch { continue; }
+        }
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, allFrames: false },
+          world: 'MAIN',
+          func: (targetUA) => { window.__captainUATarget = targetUA; },
+          args: [ua],
+        }).catch(() => {});
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, allFrames: false },
+          world: 'MAIN',
+          files: ['inject/ua-spoof.js'],
+        }).catch(() => {});
+      }
+    } catch {}
+  }
 }
 
 export async function init() {
@@ -101,7 +123,6 @@ export async function init() {
     const saved   = await get(UA_KEY);
     const results = [];
 
-    // Bug 4 fix: show either the active-UA badge OR the plain reset — never both
     if (saved?.ua) {
       const activePreset = all.find(u => u.ua === saved.ua);
       const activeTitle  = activePreset ? activePreset.title : saved.ua.slice(0, 50) + '…';

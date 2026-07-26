@@ -1,37 +1,84 @@
 // providers/focus-guard.js
 // Derived from LeechBlock NG (MPL 2.0)
-// Bug fixes: password validation (#1), fg:blocked set data (#2), await loadSiteLists (#5),
-//            single Date object in hot path (#8), Map-based tab store (#9)
-// Optimization: single keepalive alarm (#3), imports from common (#3-arch)
+// v5: Blacklist (Search Filter) merged in; context-menu race fixed.
 
 import { register } from '../core/registry.js';
 import {
-  DEFAULT_BLOCK_URL,
   BLOCKED_PAGE, DELAYED_PAGE, PASSWORD_PAGE,
   cleanOptions, cleanTimeData, getParsedURL, cleanSites, getRegExpSites,
   getMinPeriods, getTimePeriodStart, updateRolloverTime, formatTime,
   getCleanURL,
 } from './focus-guard-common.js';
+import { get, set } from '../core/storage.js';
 
 // ── Extension-side constants ──────────────────────────────────────────────────
-const EXTENSION_URL    = chrome.runtime.getURL('');
-const BLOCKABLE_URL    = /^(https?|file):/i;
-const CLOCKABLE_URL    = /^(https?|file):/i;
+const EXTENSION_URL     = chrome.runtime.getURL('');
+const BLOCKABLE_URL     = /^(https?|file):/i;
 const BLOCKED_PAGE_URL  = chrome.runtime.getURL(BLOCKED_PAGE);
 const DELAYED_PAGE_URL  = chrome.runtime.getURL(DELAYED_PAGE);
 const PASSWORD_PAGE_URL = chrome.runtime.getURL(PASSWORD_PAGE);
 
 const warn = msg => console.warn('[FG] ' + msg);
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// ── Blacklist (Search Filter) state ──────────────────────────────────────────
+const BL_RULES_KEY = 'c.bl.rules';
+let _blMatcherCache = null;
+
+function blInvalidateCache() { _blMatcherCache = null; }
+
+function blRuleToMatcher(rule) {
+  const reParts = rule.match(/^\/(.+)\/([gimsuy]*)$/);
+  if (reParts) {
+    try { return new RegExp(reParts[1], reParts[2]); } catch { return null; }
+  }
+  if (rule.startsWith('*.')) {
+    const base = rule.slice(2).replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|\\.)${base}$`, 'i');
+  }
+  const escaped = rule.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|\\.)${escaped}$`, 'i');
+}
+
+function blParseRules(text) {
+  if (!text) return [];
+  return text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+}
+
+async function blGetMatchers() {
+  if (_blMatcherCache) return _blMatcherCache;
+  const text = await get(BL_RULES_KEY);
+  _blMatcherCache = blParseRules(text || '').map(blRuleToMatcher).filter(Boolean);
+  return _blMatcherCache;
+}
+
+export async function isBlocked(hostname) {
+  if (!hostname) return false;
+  if (hostname.startsWith('chrome-extension') || hostname === 'newtab') return false;
+  const matchers = await blGetMatchers();
+  return matchers.some(m => m.test(hostname));
+}
+
+async function blGetRuleCount() {
+  return blParseRules((await get(BL_RULES_KEY)) || '').length;
+}
+
+async function blAddRule(hostname) {
+  const text     = (await get(BL_RULES_KEY)) || '';
+  const existing = blParseRules(text);
+  if (existing.includes(hostname)) return { ok: true, added: false };
+  await set(BL_RULES_KEY, [...existing, hostname].join('\n'));
+  blInvalidateCache();
+  return { ok: true, added: true };
+}
+
+// ── Focus-guard state ─────────────────────────────────────────────────────────
 let gGotOptions      = false;
 let gOptions         = {};
 let gNumSets         = 0;
-const gTabs          = new Map();   // Bug 9: Map instead of sparse array
-let gSetCounted      = new Set();   // Bug 9: Set instead of sparse array
+const gTabs          = new Map();
+let gSetCounted      = new Set();
 let gSavedTimeData   = [];
 let gRegExps         = [];
-let gActiveTabId     = 0;
 let gPrevActiveTabId = 0;
 let gFocusWindowId   = 0;
 let gClockOffset     = 0;
@@ -76,20 +123,28 @@ function testURL(url, referrer, blockRE, allowRE, referRE, allowRefers) {
 }
 
 // ── Context menus ─────────────────────────────────────────────────────────────
+// FIX: single removeAll → serial create avoids the race where background.js
+// used to call removeAll() independently for the annotate menus, wiping FG
+// menus half-built. Now all context menus live here; background.js no longer
+// calls removeAll() at startup.
 function refreshMenus() {
   if (!chrome.contextMenus) return;
-  chrome.contextMenus.removeAll();
-  const context = gOptions['contextMenu'] ? 'all' : 'action';
-  chrome.contextMenus.create({ id: 'fg-options',    title: 'Focus Guard options',   contexts: [context] });
-  chrome.contextMenus.create({ id: 'fg-lockdown',   title: 'Lockdown...',           contexts: [context] });
-  chrome.contextMenus.create({ id: 'fg-override',   title: 'Override blocking',     contexts: [context] });
-  chrome.contextMenus.create({ id: 'fg-separator',  type: 'separator',              contexts: [context] });
-  chrome.contextMenus.create({ id: 'addSite',       title: 'Add site to block set', contexts: [context] });
-  for (let set = 1; set <= gNumSets; set++) {
-    const setName = gOptions[`setName${set}`];
-    const title = 'Block Set ' + set + (setName ? ` (${setName})` : '');
-    chrome.contextMenus.create({ id: `addSite-${set}`, parentId: 'addSite', title, contexts: [context] });
-  }
+  chrome.contextMenus.removeAll(() => {
+    const context = gOptions['contextMenu'] ? 'all' : 'action';
+    chrome.contextMenus.create({ id: 'fg-options',   title: 'Focus Guard options',   contexts: [context] });
+    chrome.contextMenus.create({ id: 'fg-lockdown',  title: 'Lockdown…',             contexts: [context] });
+    chrome.contextMenus.create({ id: 'fg-override',  title: 'Override blocking',     contexts: [context] });
+    chrome.contextMenus.create({ id: 'fg-separator', type: 'separator',              contexts: [context] });
+    chrome.contextMenus.create({ id: 'addSite',      title: 'Add site to block set', contexts: [context] });
+    for (let set = 1; set <= gNumSets; set++) {
+      const setName = gOptions[`setName${set}`];
+      const title = 'Block Set ' + set + (setName ? ` (${setName})` : '');
+      chrome.contextMenus.create({ id: `addSite-${set}`, parentId: 'addSite', title, contexts: [context] });
+    }
+    // Search filter context menu item
+    chrome.contextMenus.create({ id: 'fg-bl-separator', type: 'separator',              contexts: [context] });
+    chrome.contextMenus.create({ id: 'fg-bl-block',     title: 'Search Filter: Block this site', contexts: [context] });
+  });
 }
 
 // ── Ticker (offscreen) ────────────────────────────────────────────────────────
@@ -124,7 +179,7 @@ async function retrieveOptions(update = false) {
   createRegExps();
   refreshMenus();
   refreshTicker();
-  await loadSiteLists();   // Bug 5: must await so URL-based lists are ready before first check
+  await loadSiteLists();
   updateIcon();
   for (let set = 1; set <= gNumSets; set++) {
     gSavedTimeData[set] = gOptions[`timedata${set}`].toString();
@@ -211,7 +266,7 @@ function updateIcon() {
 function clockPageTime(tabId, isNew, isFocused) {
   if (!gGotOptions) return;
   const tab = gTabs.get(tabId);
-  if (!tab || !CLOCKABLE_URL.test(tab.url)) return;
+  if (!tab || !BLOCKABLE_URL.test(tab.url)) return;
   const now = Math.floor(Date.now() / 1000) + gClockOffset * 60;
   for (let set = 1; set <= gNumSets; set++) {
     if (gSetCounted.has(set)) continue;
@@ -241,7 +296,6 @@ function checkTab(id, isBeforeNav, isRepeat) {
   if (!tab || !BLOCKABLE_URL.test(tab.url) || tab.url.startsWith(EXTENSION_URL)) return false;
 
   const now = Math.floor(Date.now() / 1000) + gClockOffset * 60;
-  // Bug 8: single Date object for the same timestamp
   const d           = new Date(now * 1000);
   const dayOfWeek   = d.getDay();
   const minuteOfDay = d.getHours() * 60 + d.getMinutes();
@@ -300,6 +354,12 @@ async function cancelLockdown(set) {
 async function applyOverride(endTime) {
   gOptions['oret'] = endTime;
   await chrome.storage.local.set({ oret: endTime });
+  updateIcon();
+}
+
+async function cancelOverride() {
+  gOptions['oret'] = 0;
+  await chrome.storage.local.set({ oret: 0 });
   updateIcon();
 }
 
@@ -443,7 +503,7 @@ function handleTabUpdated(tabId, changeInfo, tab) {
 
 function handleTabActivated(activeInfo) {
   const { tabId, previousTabId, windowId } = activeInfo;
-  gActiveTabId = tabId; gPrevActiveTabId = previousTabId;
+  gPrevActiveTabId = previousTabId;
   initTab(tabId);
   gTabs.get(tabId).focused = true;
   if (!gGotOptions) return;
@@ -477,9 +537,13 @@ function handleBeforeNavigate({ tabId, frameId, url }) {
 // ── Context menu clicks ───────────────────────────────────────────────────────
 function handleMenuClick(info, tab) {
   const { menuItemId: id } = info;
-  if      (id === 'fg-options')  openOptions();
-  else if (id === 'fg-lockdown') openLockdown();
-  else if (id === 'fg-override') applyOverride(Math.floor(Date.now() / 1000) + 3600);
+  if      (id === 'fg-options')    openOptions();
+  else if (id === 'fg-lockdown')   openLockdown();
+  else if (id === 'fg-override')   applyOverride(Math.floor(Date.now() / 1000) + 3600);
+  else if (id === 'fg-bl-block') {
+    const parsed = tab?.url ? getParsedURL(tab.url) : {};
+    if (parsed.host) blAddRule(parsed.host).catch(() => {});
+  }
   else if (id.startsWith('addSite-')) {
     const set    = parseInt(id.split('-')[1], 10);
     const parsed = tab?.url ? getParsedURL(tab.url) : {};
@@ -507,17 +571,20 @@ export async function init() {
   chrome.webNavigation.onBeforeNavigate.addListener(handleBeforeNavigate);
   if (chrome.contextMenus) chrome.contextMenus.onClicked.addListener(handleMenuClick);
 
-  // Optimization 3: one alarm every 30 s instead of 6 staggered alarms
   chrome.alarms.create('fg-keepalive', { periodInMinutes: 0.5 });
 
   register('focus-guard', async (q) => {
     const match = t => !q || t.toLowerCase().includes(q.toLowerCase());
-    return [
-      { id: 'fg:block-site',    title: 'Focus Guard: Block this site',   desc: 'Add current site to block set 1',      emoji: '🚫' },
-      { id: 'fg:open-lockdown', title: 'Focus Guard: Lockdown…',         desc: 'Open lockdown timer page',             emoji: '🔒' },
-      { id: 'fg:override',      title: 'Focus Guard: Override (1 hour)', desc: 'Temporarily disable blocking for 1hr', emoji: '⏰' },
-      { id: 'fg:open-options',  title: 'Focus Guard: Open settings',     desc: 'Open Focus Guard settings tab',        emoji: '⚙️' },
+    const blCount = await blGetRuleCount();
+    const items = [
+      { id: 'fg:block-site',    title: 'Focus Guard: Block this site',    desc: 'Add current site to block set 1',      emoji: '🚫' },
+      { id: 'fg:open-lockdown', title: 'Focus Guard: Lockdown…',          desc: 'Open lockdown timer page',             emoji: '🔒' },
+      { id: 'fg:override',      title: 'Focus Guard: Override (1 hour)',  desc: 'Temporarily disable blocking for 1hr', emoji: '⏰' },
+      { id: 'fg:open-options',  title: 'Focus Guard: Open settings',      desc: 'Open Focus Guard settings tab',        emoji: '⚙️' },
+      { id: 'bl:open',          title: 'Search Filter: Open settings',    desc: `${blCount} rule${blCount !== 1 ? 's' : ''} active`, emoji: '⊗' },
+      { id: 'bl:add-current',   title: 'Search Filter: Block current site', desc: 'Hide this domain from Google results', emoji: '⊗' },
     ].filter(c => match(c.title));
+    return items;
   });
 }
 
@@ -542,7 +609,6 @@ export const handlers = {
 
   'fg:tick': async () => handleTick(),
 
-  // Bug 2 fix: return data for the actual set, not hardcoded set 1
   'fg:blocked': async (msg, sender) => {
     if (!sender?.tab?.id) return null;
     const set = +msg.set || 1;
@@ -558,24 +624,50 @@ export const handlers = {
     if (!sender?.tab?.id) return;
     await allowBlockedPage(sender.tab.id, msg.blockedURL, msg.blockedSet, gOptions[`delayAutoLoad${msg.blockedSet}`]);
   },
-  'fg:close':        async (_, sender) => { if (sender?.tab?.id) chrome.tabs.remove(sender.tab.id); },
-  'fg:lockdown':     async (msg)       => { if (!msg.endTime) await cancelLockdown(msg.set); else await applyLockdown(msg.set, msg.endTime); },
-  'fg:override':     async ()          => applyOverride(Math.floor(Date.now() / 1000) + 3600),
-  'fg:options':      async (msg)       => { await retrieveOptions(true); reorderTimeData(msg.ordering); },
-  'fg:add-sites':    async (msg)       => addSitesToSet(msg.sites, msg.set),
-  'fg:block-site':   async (_, sender) => blockCurrentSite(sender),
-  'fg:open-options': async ()          => openOptions(),
-  'fg:restart':      async (msg)       => restartTimeData(msg.set),
-  'fg:discard-time': async ()          => discardRemainingTime(),
-  'fg:open-lockdown': async ()         => openLockdown(),
+  'fg:close':           async (_, sender) => { if (sender?.tab?.id) chrome.tabs.remove(sender.tab.id); },
+  'fg:lockdown':        async (msg)       => { if (!msg.endTime) await cancelLockdown(msg.set); else await applyLockdown(msg.set, msg.endTime); },
+  'fg:override':        async ()          => applyOverride(Math.floor(Date.now() / 1000) + 3600),
+  'fg:cancel-override': async ()          => cancelOverride(),
+  'fg:options':         async (msg)       => { await retrieveOptions(true); reorderTimeData(msg.ordering); },
+  'fg:add-sites':       async (msg)       => addSitesToSet(msg.sites, msg.set),
+  'fg:block-site':      async (_, sender) => blockCurrentSite(sender),
+  'fg:open-options':    async ()          => openOptions(),
+  'fg:restart':         async (msg)       => restartTimeData(msg.set),
+  'fg:discard-time':    async ()          => discardRemainingTime(),
+  'fg:open-lockdown':   async ()          => openLockdown(),
 
-  // Bug 1 fix: validate the password before granting access
   'fg:password': async (msg, sender) => {
     if (!sender?.tab?.id) return { ok: false };
     const set       = +msg.blockedSet || 1;
     const correctPw = gOptions[`passwordSetSpec${set}`] || gOptions['password'];
     if (!correctPw || msg.password !== correctPw) return { ok: false };
     await allowBlockedPage(sender.tab.id, msg.blockedURL, set, true);
+    return { ok: true };
+  },
+
+  // ── Merged blacklist handlers ──────────────────────────────────────────────
+  'bl:check':      async (msg)          => ({ blocked: await isBlocked(msg.hostname) }),
+  'bl:add':        async (msg)          => blAddRule(msg.hostname),
+  'bl:add-current': async (_, sender)  => {
+    try {
+      const tab = sender?.tab || (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+      return blAddRule(new URL(tab?.url || '').hostname);
+    } catch { return { ok: false }; }
+  },
+  'bl:remove': async (msg) => {
+    const text = (await get(BL_RULES_KEY)) || '';
+    await set(BL_RULES_KEY, blParseRules(text).filter(r => r !== msg.rule).join('\n'));
+    blInvalidateCache();
+    return { ok: true };
+  },
+  'bl:get-rules': async () => ({ ok: true, rules: (await get(BL_RULES_KEY)) || '' }),
+  'bl:set-rules': async (msg) => {
+    await set(BL_RULES_KEY, msg.rules || '');
+    blInvalidateCache();
+    return { ok: true };
+  },
+  'bl:open': async () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('pages/options.html#blacklist') });
     return { ok: true };
   },
 };

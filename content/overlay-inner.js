@@ -25,7 +25,6 @@ const FILTERS = [
   { aliases: ['vault','pw','pass'],     label: '🔐 Vault',         color: '#f59e0b', match: a => a.id?.startsWith('vault:') },
   { aliases: ['ai','chat'],             label: '🤖 AI',            color: '#7c3aed', match: a => a.id?.startsWith('ai:') },
   { aliases: ['sleep','discard'],       label: '💤 Tab Sleep',     color: '#6b7280', match: a => a.id?.startsWith('tab-discard:') },
-  { aliases: ['note','annotate','ann'], label: '📝 Annotations',   color: '#ec4899', match: a => a.id?.startsWith('annotate:') },
 ];
 
 // ── Slash parsing ────────────────────────────────────────────────────────────
@@ -81,6 +80,7 @@ input.addEventListener('input', () => {
   debounce = setTimeout(() => runQuery(input.value.trim()), 120);
 });
 
+document.getElementById('backdrop').addEventListener('mousedown', e => e.preventDefault());
 document.getElementById('backdrop').addEventListener('click', e => {
   if (e.target === e.currentTarget) parent.postMessage({ type: 'captain:close' }, '*');
 });
@@ -99,6 +99,7 @@ function activateSel() {
 
 // ── Query flow ───────────────────────────────────────────────────────────────
 function runQuery(raw) {
+  results.setAttribute('data-loading', '1');
   if (activeFilter) {
     parent.postMessage({ type: 'captain:query', query: raw }, '*');
     return;
@@ -107,7 +108,6 @@ function runQuery(raw) {
   if (p.kind === 'help')   { renderHelp(p.partial); return; }
   if (p.kind === 'filter') { setFilter(p.filter); input.value = p.query; }
 
-  // Stubs only shown when there's a query and no type-filter active
   const stubs = raw && !activeFilter ? [
     { id: 'browser:search', title: `Search "${raw}"`, desc: 'Search with default engine', emoji: '🔍' },
     { id: 'browser:goto',   title: `Go to "${raw}"`,  desc: 'Navigate to URL',            emoji: '🌐' },
@@ -136,9 +136,23 @@ window.addEventListener('message', e => {
   }
 });
 
+// ── v3: send action to parent with usage-tracking metadata ───────────────────
+function sendAction(action) {
+  parent.postMessage({
+    type: 'captain:action',
+    action: {
+      ...action,
+      query: input.value.trim(),
+      _fromPalette: true,
+      _actionId: action.id,
+    },
+  }, '*');
+}
+
 // ── Render: help ─────────────────────────────────────────────────────────────
 function renderHelp(partial) {
   selIdx = -1;
+  results.removeAttribute('data-loading');
   const frag = document.createDocumentFragment();
 
   const hdr = el('div', 'section-label');
@@ -163,7 +177,6 @@ function renderHelp(partial) {
     badge.textContent = '/' + f.aliases[0];
 
     row.append(icon, txt, badge);
-    // Prevent mousedown focus loss (same fix as result rows)
     row.addEventListener('mousedown', e => e.preventDefault());
     row.addEventListener('click', () => {
       setFilter(f); input.value = ''; input.focus();
@@ -204,6 +217,7 @@ function renderResults(actions, q) {
   results.innerHTML = '';
   results.appendChild(frag);
   rowEls = [...results.querySelectorAll('.result-item')];
+  results.removeAttribute('data-loading');
 }
 
 // ── Build a single result row ─────────────────────────────────────────────────
@@ -211,7 +225,6 @@ function buildRow(action, q) {
   const row = el('div', 'result-item');
   row.setAttribute('role', 'option');
 
-  // Icon
   const icon = el('div', 'item-icon');
   if (action.icon) {
     const img = document.createElement('img');
@@ -222,11 +235,9 @@ function buildRow(action, q) {
     icon.textContent = action.emoji || '⚡';
   }
 
-  // Text
   const txt   = el('div', 'item-text');
   const title = el('div', 'item-title'); title.textContent = action.title || '';
   const desc  = el('div', 'item-desc');
-  // Highlight query in desc/url
   const descStr = action.desc || action.url || '';
   if (q && descStr.toLowerCase().includes(q.toLowerCase())) {
     const i = descStr.toLowerCase().indexOf(q.toLowerCase());
@@ -241,7 +252,6 @@ function buildRow(action, q) {
   txt.append(title, desc);
   row.append(icon, txt);
 
-  // Key badges
   if (action.keys?.length) {
     const keys = el('div', 'item-keys');
     for (const k of action.keys) {
@@ -250,7 +260,6 @@ function buildRow(action, q) {
     row.appendChild(keys);
   }
 
-  // Remove button (tabs and bookmarks only)
   if (action.type === 'tab' || action.type === 'bookmark') {
     const rm = el('div', 'item-remove');
     rm.title = action.type === 'tab' ? 'Close tab' : 'Remove bookmark';
@@ -268,14 +277,9 @@ function buildRow(action, q) {
     row.appendChild(rm);
   }
 
-  // Prevent mousedown from stealing focus from the input.
-  // Without this, mousedown → input blur → iframe loses focus → click never fires.
-  // This is the standard fix for all command palette UIs.
+  // Prevent mousedown from stealing focus — critical fix for click reliability
   row.addEventListener('mousedown', e => e.preventDefault());
-
-  row.addEventListener('click', () =>
-    parent.postMessage({ type: 'captain:action', action: { ...action, query: input.value.trim() } }, '*')
-  );
+  row.addEventListener('click', () => sendAction(action));
   return row;
 }
 
@@ -288,12 +292,9 @@ function el(tag, cls) {
 
 input.focus();
 
-// Prevent the entire palette from stealing focus from the input on mousedown.
-// This is the standard command-palette technique: the input stays focused,
-// clicks on results fire reliably, no blur → re-focus dance needed.
+// Prevent entire palette mousedown from stealing input focus
 document.getElementById('palette').addEventListener('mousedown', e => {
   if (e.target !== input) e.preventDefault();
 });
 
-// Signal parent that iframe is ready to receive postMessage commands
 parent.postMessage({ type: 'captain:ready' }, '*');

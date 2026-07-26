@@ -182,5 +182,4 @@ export const handlers = {
   // Streaming chat: handled via port connection in background.js
 };
 
-// ── Extra handlers added after init ──────────────────────────────────────────
-// (Merged into handlers export above intentionally — this is a note only)
+

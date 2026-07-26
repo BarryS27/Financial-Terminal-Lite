@@ -1,6 +1,4 @@
 // content/overlay.js — Captain command palette overlay
-// Injected into every page via manifest. IIFE + sentinel prevents duplicate
-// declaration errors if executeScript re-injects this file.
 
 (function () {
   'use strict';
@@ -9,11 +7,22 @@
 
   let frame   = null;
   let open    = false;
-  let _ready  = false;  // true once inner iframe signals captain:ready
-  let _queue  = null;   // pending message to deliver once ready
+  let _ready  = false;
+  let _queue  = null;
+
+  let _cssInjected = false;
+  function ensureCSS() {
+    if (_cssInjected) return;
+    _cssInjected = true;
+    const link = document.createElement('link');
+    link.rel  = 'stylesheet';
+    link.href = chrome.runtime.getURL('content/overlay.css');
+    document.head?.appendChild(link);
+  }
 
   function ensureFrame() {
     if (frame) return;
+    ensureCSS();
     frame = document.createElement('iframe');
     frame.id  = 'captain-overlay-frame';
     frame.src = chrome.runtime.getURL('content/overlay-inner.html');
@@ -27,15 +36,12 @@
     window.addEventListener('message', onFrameMsg);
   }
 
-  // All postMessages to the iframe use '*'. 
-  // We only send UI commands (show/hide/results) — no secrets.
-  // Incoming messages are validated strictly by e.origin check below.
   function framePost(msg) {
     if (!frame) return;
     if (_ready) {
       frame.contentWindow?.postMessage(msg, '*');
     } else {
-      _queue = msg;   // queue until ready signal arrives
+      _queue = msg;
     }
   }
 
@@ -56,7 +62,6 @@
   const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL('')).origin;
 
   function onFrameMsg(e) {
-    // Only trust messages from our own extension iframe
     if (e.origin !== EXTENSION_ORIGIN) return;
     const { type } = e.data || {};
     if (!type?.startsWith('captain:')) return;
@@ -67,7 +72,7 @@
       return;
     }
     if (type === 'captain:close')  { hide(); return; }
-    if (type === 'captain:action') { hide(); dispatchAction(e.data.action); return; }
+    if (type === 'captain:action') { hide(); dispatchAction(e.data.action).catch(e => console.warn('[Captain] dispatch error:', e)); return; }
     if (type === 'captain:query')  { relay(e.data.query); return; }
     if (type === 'captain:remove') {
       chrome.runtime.sendMessage({ type: 'browser:remove', ...e.data }).catch(() => {});
@@ -82,7 +87,10 @@
 
   async function dispatchAction(action) {
     const id = action.id || '';
+    // Preserve usage-tracking metadata so background.js can recordUse()
+    const _meta = { _fromPalette: action._fromPalette || false, _actionId: action._actionId || id };
     let msg;
+
     if (id === 'browser:search' || action.action === 'search') {
       msg = { type: 'browser:search', query: action.query };
     } else if (id === 'browser:goto' || action.action === 'goto') {
@@ -98,16 +106,35 @@
       msg = { type: 'ua:set', ua: decodeURIComponent(id.slice(7)), mode: 'global' };
     } else if (id.startsWith('act:') || id.startsWith('sc:')) {
       msg = { type: 'browser:do-action', id, url: action.url };
+    } else if (id.startsWith('proxy:switch:')) {
+      let _pname = id.slice('proxy:switch:'.length);
+      try { _pname = decodeURIComponent(_pname); } catch {}
+      msg = { type: 'proxy:switch', name: _pname };
+    } else if (id.startsWith('ws:activate:')) {
+      // ws:activate:<workspace-id>
+      msg = { type: 'ws:activate', id: id.slice('ws:activate:'.length) };
+    } else if (id.startsWith('vault:fill:')) {
+      msg = { type: 'vault:fill:' + id.slice('vault:fill:'.length) };
     } else {
       msg = { type: id, ...action };
     }
-    await chrome.runtime.sendMessage(msg).catch(() => {});
+
+    await chrome.runtime.sendMessage({ ...msg, ..._meta }).catch(() => {});
   }
 
   chrome.runtime.onMessage.addListener(msg => {
     if (msg.type === 'captain:open')  show();
     if (msg.type === 'captain:close') hide();
   });
+
+  window.addEventListener('popstate', hide);
+  window.addEventListener('hashchange', hide);
+  (function patchHistory() {
+    const _push    = history.pushState.bind(history);
+    const _replace = history.replaceState.bind(history);
+    history.pushState    = (...a) => { hide(); _push(...a); };
+    history.replaceState = (...a) => { hide(); _replace(...a); };
+  })();
 
   document.addEventListener('keydown', e => {
     const mac = /mac/i.test(navigator.userAgentData?.platform || navigator.userAgent);

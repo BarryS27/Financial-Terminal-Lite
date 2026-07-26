@@ -1,34 +1,39 @@
 // providers/vault.js — Local .kdbx password manager
 // Zero backend, zero network. kdbxweb parses the file in-extension.
-// Vault data lives only in chrome.storage.session (cleared on browser close).
-// File handle persisted in IndexedDB for re-open without picker.
+//
+// v5 key-management: the AES-GCM session key is itself wrapped with a
+// per-session KEK that is stored in chrome.storage.session under a separate
+// key.  On Service-Worker restart the wrapped key is re-imported so the user
+// does NOT have to unlock again during the same browser session.
+//
+// Flow:
+//   unlock()  → generate AES-GCM data-key → wrap it with KEK →
+//               store { wrappedKey, kekJwk } in chrome.storage.session →
+//               store encrypted vault blob in chrome.storage.session
+//   SW restart → _sessionKey is null → getOrMakeSessionKey() finds the
+//               wrapped key in storage → unwraps → restores _sessionKey
+//   lock()    → wipe both storage entries, null _sessionKey
 
 import { register } from '../core/registry.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const IDB_DB   = 'captain-vault';
+const IDB_DB    = 'captain-vault';
 const IDB_STORE = 'handles';
 const IDB_KEY   = 'kdbx-handle';
-// Session key: only survives until browser is closed
-const SESSION_KEY = 'vault.unlocked';
+
+const SESSION_BLOB_KEY    = 'vault.blob';   // encrypted vault entries
+const SESSION_WRAPPED_KEY = 'vault.wk';     // { kekJwk, wrappedKey (b64) }
 
 // ── kdbxweb dynamic loader ────────────────────────────────────────────────────
-// We load kdbxweb lazily from the extension's lib/ folder (bundled at build),
-// or fall back to CDN for development. For production, bundle kdbxweb into
-// lib/kdbxweb.js. The library uses Web Crypto so no external dependencies.
 let _kdbxweb = null;
 async function getKdbxweb() {
   if (_kdbxweb) return _kdbxweb;
-  // Try local bundle first
   const localUrl = chrome.runtime.getURL('lib/kdbxweb.js');
-  try {
-    _kdbxweb = await import(localUrl);
-    return _kdbxweb;
-  } catch {}
+  try { _kdbxweb = await import(localUrl); return _kdbxweb; } catch {}
   throw new Error('kdbxweb not found. Add lib/kdbxweb.js to the extension.');
 }
 
-// ── IndexedDB handle store ────────────────────────────────────────────────────
+// ── IndexedDB file-handle store ───────────────────────────────────────────────
 function openIDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open(IDB_DB, 1);
@@ -37,14 +42,12 @@ function openIDB() {
     req.onerror   = e => rej(e.target.error);
   });
 }
-
 async function saveHandle(handle) {
-  const db  = await openIDB();
-  const tx  = db.transaction(IDB_STORE, 'readwrite');
+  const db = await openIDB();
+  const tx = db.transaction(IDB_STORE, 'readwrite');
   tx.objectStore(IDB_STORE).put(handle, IDB_KEY);
   return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
 }
-
 async function loadHandle() {
   const db  = await openIDB();
   const tx  = db.transaction(IDB_STORE, 'readonly');
@@ -54,7 +57,6 @@ async function loadHandle() {
     req.onerror   = () => rej(req.error);
   });
 }
-
 async function clearHandle() {
   const db = await openIDB();
   const tx = db.transaction(IDB_STORE, 'readwrite');
@@ -62,25 +64,95 @@ async function clearHandle() {
   return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
 }
 
-// ── Session vault store ───────────────────────────────────────────────────────
-// Stores {entries: [{title,username,password,url,notes}], locked: bool}
-// chrome.storage.session is cleared when all extension pages close / browser exits
+// ── Key-management helpers ────────────────────────────────────────────────────
+// We keep the data-key in memory (_sessionKey).  To survive SW restarts we
+// wrap it with an ephemeral AES-KW KEK and store the wrapped form in
+// chrome.storage.session (which is cleared when the browser closes).
+
+let _sessionKey = null;   // AES-GCM CryptoKey — in-memory only
+
+async function generateDataKey() {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+async function generateKEK() {
+  return crypto.subtle.generateKey({ name: 'AES-KW', length: 256 }, true, ['wrapKey', 'unwrapKey']);
+}
+
+async function persistWrappedKey(dataKey) {
+  const kek        = await generateKEK();
+  const wrapped    = await crypto.subtle.wrapKey('raw', dataKey, kek, { name: 'AES-KW' });
+  const kekJwk     = await crypto.subtle.exportKey('jwk', kek);
+  const wrappedB64 = btoa(String.fromCharCode(...new Uint8Array(wrapped)));
+  await chrome.storage.session.set({
+    [SESSION_WRAPPED_KEY]: { kekJwk, wrappedKey: wrappedB64 },
+  });
+}
+
+async function restoreDataKey() {
+  const r = await chrome.storage.session.get(SESSION_WRAPPED_KEY);
+  const stored = r[SESSION_WRAPPED_KEY];
+  if (!stored?.kekJwk || !stored?.wrappedKey) return null;
+  try {
+    const kek     = await crypto.subtle.importKey('jwk', stored.kekJwk, { name: 'AES-KW' }, false, ['unwrapKey']);
+    const wrapped = Uint8Array.from(atob(stored.wrappedKey), c => c.charCodeAt(0));
+    return await crypto.subtle.unwrapKey('raw', wrapped, kek, { name: 'AES-KW' }, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  } catch { return null; }
+}
+
+// Returns the data key, re-importing from storage if SW restarted.
+async function getOrMakeSessionKey() {
+  if (_sessionKey) return _sessionKey;
+  // Attempt to restore from wrapped-key store (SW may have restarted)
+  const restored = await restoreDataKey();
+  if (restored) { _sessionKey = restored; return _sessionKey; }
+  // Brand-new session: generate, persist wrapper, return
+  _sessionKey = await generateDataKey();
+  await persistWrappedKey(_sessionKey);
+  return _sessionKey;
+}
+
+// ── Blob encrypt / decrypt ────────────────────────────────────────────────────
+async function encryptBlob(obj) {
+  const key = await getOrMakeSessionKey();
+  const iv  = crypto.getRandomValues(new Uint8Array(12));
+  const enc = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key,
+    new TextEncoder().encode(JSON.stringify(obj)));
+  const buf = new Uint8Array(12 + enc.byteLength);
+  buf.set(iv); buf.set(new Uint8Array(enc), 12);
+  return btoa(String.fromCharCode(...buf));
+}
+
+async function decryptBlob(b64) {
+  const key = await getOrMakeSessionKey();   // may restore from session storage
+  if (!key) return null;
+  const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  try {
+    const dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
+    return JSON.parse(new TextDecoder().decode(dec));
+  } catch { return null; }
+}
+
+// ── chrome.storage.session vault blob ────────────────────────────────────────
 async function sessionGet() {
-  const r = await chrome.storage.session.get(SESSION_KEY);
-  return r[SESSION_KEY] ?? null;
+  const r   = await chrome.storage.session.get(SESSION_BLOB_KEY);
+  const raw = r[SESSION_BLOB_KEY];
+  if (!raw) return null;
+  if (typeof raw === 'string') return decryptBlob(raw);
+  return raw; // legacy plain-object fallback
 }
 async function sessionSet(data) {
-  await chrome.storage.session.set({ [SESSION_KEY]: data });
+  await chrome.storage.session.set({ [SESSION_BLOB_KEY]: await encryptBlob(data) });
 }
 async function sessionClear() {
-  await chrome.storage.session.remove(SESSION_KEY);
+  _sessionKey = null;
+  await chrome.storage.session.remove([SESSION_BLOB_KEY, SESSION_WRAPPED_KEY]);
 }
 
 // ── Domain matching ───────────────────────────────────────────────────────────
 function extractDomain(urlStr) {
   try { return new URL(urlStr).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; }
 }
-
 function entriesForDomain(entries, hostname) {
   if (!hostname || !entries) return [];
   const h = hostname.toLowerCase().replace(/^www\./, '');
@@ -99,19 +171,17 @@ async function readFileBytes(handle) {
     if (req !== 'granted') throw new Error('File permission denied');
   }
   const file   = await handle.getFile();
-  const buffer = await file.arrayBuffer();
-  return buffer;
+  return file.arrayBuffer();
 }
 
 // ── kdbxweb parsing ───────────────────────────────────────────────────────────
 async function parseKdbx(buffer, password, keyFileBuffer) {
-  const kdbxweb  = await getKdbxweb();
-  const creds    = new kdbxweb.Credentials(
+  const kdbxweb = await getKdbxweb();
+  const creds   = new kdbxweb.Credentials(
     kdbxweb.ProtectedValue.fromString(password),
     keyFileBuffer ? kdbxweb.Credentials.createKeyFileCredentials(keyFileBuffer) : null,
   );
-  const db       = await kdbxweb.Kdbx.load(buffer, creds);
-  return db;
+  return kdbxweb.Kdbx.load(buffer, creds);
 }
 
 function dbToEntries(db) {
@@ -121,9 +191,9 @@ function dbToEntries(db) {
       const f = entry.fields;
       entries.push({
         uuid:     entry.uuid.id,
-        title:    f.get('Title')?.getText?.()   ?? f.get('Title')    ?? '',
+        title:    f.get('Title')?.getText?.()    ?? f.get('Title')    ?? '',
         username: f.get('UserName')?.getText?.() ?? f.get('UserName') ?? '',
-        password: f.get('Password')?.getText?.() ?? '',   // unwrap ProtectedValue
+        password: f.get('Password')?.getText?.() ?? '',
         url:      f.get('URL')?.getText?.()      ?? f.get('URL')      ?? '',
         notes:    f.get('Notes')?.getText?.()    ?? f.get('Notes')    ?? '',
         group:    group.name,
@@ -135,16 +205,14 @@ function dbToEntries(db) {
   return entries;
 }
 
-// ── Re-serialise and write back ────────────────────────────────────────────────
 async function writeKdbx(db, handle) {
-  const buffer  = await db.save();
+  const buffer   = await db.save();
   const writable = await handle.createWritable();
   await writable.write(buffer);
   await writable.close();
 }
 
-// ── In-memory DB reference (for writes) ──────────────────────────────────────
-// Only held while unlocked; nulled on lock.
+// ── In-memory DB reference ────────────────────────────────────────────────────
 let _openDb     = null;
 let _openHandle = null;
 
@@ -157,7 +225,7 @@ async function unlock(password, keyFileBuffer) {
   catch (e) { return { ok: false, error: 'permission', msg: String(e) }; }
   let db;
   try { db = await parseKdbx(buffer, password, keyFileBuffer); }
-  catch (e) { return { ok: false, error: 'bad_password', msg: 'Wrong password or corrupt file.' }; }
+  catch { return { ok: false, error: 'bad_password', msg: 'Wrong password or corrupt file.' }; }
 
   const entries = dbToEntries(db);
   await sessionSet({ entries, locked: false });
@@ -182,7 +250,6 @@ async function getStatus() {
 async function getEntriesForHostname(hostname) {
   const s = await sessionGet();
   if (!s || s.locked) return { ok: false, locked: true };
-  // Strip passwords — caller uses vault:get-password for the actual secret
   const entries = entriesForDomain(s.entries, hostname)
     .map(({ password: _, ...e }) => e);
   return { ok: true, entries };
@@ -198,19 +265,16 @@ async function searchEntries(query) {
         e.username.toLowerCase().includes(q) ||
         e.url.toLowerCase().includes(q))
     : (s.entries || []);
-  // Never return passwords in search results — user copies from vault page
   return { ok: true, entries: hits.map(({ password: _, ...e }) => e) };
 }
 
-// Add or update an entry and persist to disk
 async function saveEntry(entry) {
   if (!_openDb || !_openHandle) return { ok: false, error: 'locked' };
-  const kdbxweb = await getKdbxweb();
+  const kdbxweb  = await getKdbxweb();
   const defGroup = _openDb.getDefaultGroup();
 
   let kdbxEntry;
   if (entry.uuid) {
-    // Find existing
     function findEntry(group) {
       for (const e of group.entries) if (e.uuid.id === entry.uuid) return e;
       for (const g of group.groups) { const r = findEntry(g); if (r) return r; }
@@ -218,29 +282,22 @@ async function saveEntry(entry) {
     }
     kdbxEntry = findEntry(defGroup);
   }
-  if (!kdbxEntry) {
-    kdbxEntry = _openDb.createEntry(defGroup);
-  }
+  if (!kdbxEntry) kdbxEntry = _openDb.createEntry(defGroup);
 
-  const set = (key, val) => {
-    if (key === 'Password') {
-      kdbxEntry.fields.set(key, kdbxweb.ProtectedValue.fromString(val));
-    } else {
-      kdbxEntry.fields.set(key, val);
-    }
+  const setField = (key, val) => {
+    kdbxEntry.fields.set(key,
+      key === 'Password' ? kdbxweb.ProtectedValue.fromString(val) : val);
   };
-  set('Title',    entry.title    ?? '');
-  set('UserName', entry.username ?? '');
-  set('Password', entry.password ?? '');
-  set('URL',      entry.url      ?? '');
-  set('Notes',    entry.notes    ?? '');
+  setField('Title',    entry.title    ?? '');
+  setField('UserName', entry.username ?? '');
+  setField('Password', entry.password ?? '');
+  setField('URL',      entry.url      ?? '');
+  setField('Notes',    entry.notes    ?? '');
 
   try { await writeKdbx(_openDb, _openHandle); }
   catch (e) { return { ok: false, error: 'write_failed', msg: String(e) }; }
 
-  // Refresh session
-  const entries = dbToEntries(_openDb);
-  await sessionSet({ entries, locked: false });
+  await sessionSet({ entries: dbToEntries(_openDb), locked: false });
   return { ok: true, uuid: kdbxEntry.uuid.id };
 }
 
@@ -255,15 +312,14 @@ async function deleteEntry(uuid) {
   if (!findAndRemove(_openDb.getDefaultGroup())) return { ok: false, error: 'not_found' };
   try { await writeKdbx(_openDb, _openHandle); }
   catch (e) { return { ok: false, error: 'write_failed', msg: String(e) }; }
-  const entries = dbToEntries(_openDb);
-  await sessionSet({ entries, locked: false });
+  await sessionSet({ entries: dbToEntries(_openDb), locked: false });
   return { ok: true };
 }
 
 // ── Provider registration ─────────────────────────────────────────────────────
 export async function init() {
   register('vault', async (q) => {
-    const match = t => !q || t.toLowerCase().includes(q.toLowerCase());
+    const match  = t => !q || t.toLowerCase().includes(q.toLowerCase());
     const status = await getStatus();
     const items  = [];
 
@@ -280,7 +336,6 @@ export async function init() {
           desc: 'Browse and fill passwords', emoji: '🔐', type: 'action' });
     }
 
-    // If unlocked and there's a query, search entries
     if (status.unlocked && q) {
       const res = await searchEntries(q);
       if (res.ok) {
@@ -301,23 +356,15 @@ export async function init() {
 
 // ── Message handlers ──────────────────────────────────────────────────────────
 export const handlers = {
-  // Unlock: { type:'vault:unlock', password, keyFile? (ArrayBuffer base64) }
   'vault:unlock': async (msg) => {
     const keyBuf = msg.keyFile ? _b64ToBuffer(msg.keyFile) : null;
     return unlock(msg.password, keyBuf);
   },
-
-  'vault:lock': async () => lock(),
-
-  'vault:status': async () => getStatus(),
-
-  // Returns entries matching the current tab's hostname, passwords included
+  'vault:lock':         async ()    => lock(),
+  'vault:status':       async ()    => getStatus(),
   'vault:for-hostname': async (msg) => getEntriesForHostname(msg.hostname),
+  'vault:search':       async (msg) => searchEntries(msg.query),
 
-  // Returns entries matching query, passwords omitted
-  'vault:search': async (msg) => searchEntries(msg.query),
-
-  // Returns a single entry's password (requires unlocked)
   'vault:get-password': async (msg) => {
     const s = await sessionGet();
     if (!s || s.locked) return { ok: false, locked: true };
@@ -326,8 +373,7 @@ export const handlers = {
     return { ok: true, password: e.password };
   },
 
-  'vault:save-entry': async (msg) => saveEntry(msg.entry),
-
+  'vault:save-entry':   async (msg) => saveEntry(msg.entry),
   'vault:delete-entry': async (msg) => deleteEntry(msg.uuid),
 
   'vault:forget-file': async () => {
@@ -340,14 +386,11 @@ export const handlers = {
     return { ok: true };
   },
 
-  // Content-script autofill trigger
   'vault:fill': async (msg) => {
-    // msg.uuid — triggered from command palette action
     const s = await sessionGet();
     if (!s || s.locked) return { ok: false, locked: true };
     const e = (s.entries || []).find(e => e.uuid === msg.uuid);
     if (!e) return { ok: false, error: 'not_found' };
-    // Tell the active content script to fill
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.id) {
       chrome.tabs.sendMessage(tab.id, {
@@ -360,7 +403,6 @@ export const handlers = {
   },
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function _b64ToBuffer(b64) {
   const bin = atob(b64);
   const buf = new Uint8Array(bin.length);
