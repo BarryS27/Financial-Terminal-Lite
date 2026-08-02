@@ -22,9 +22,11 @@ const FILTERS = [
   { aliases: ['bl','filter','sf'],      label: '🚫 Search Filter', color: '#f97316', match: a => a.id?.startsWith('bl:') },
   { aliases: ['proxy','px'],            label: '🔀 Proxy',         color: '#14b8a6', match: a => a.id?.startsWith('proxy:') },
   { aliases: ['workspace','ws','work'], label: '🗂 Workspace',     color: '#10b981', match: a => a.id?.startsWith('ws:') },
-  { aliases: ['vault','pw','pass'],     label: '🔐 Vault',         color: '#f59e0b', match: a => a.id?.startsWith('vault:') },
+  { aliases: ['vault','pw','pass','totp','2fa','otp'], label: '🔐 Vault', color: '#f59e0b', match: a => a.id?.startsWith('vault:') },
   { aliases: ['ai','chat'],             label: '🤖 AI',            color: '#7c3aed', match: a => a.id?.startsWith('ai:') },
   { aliases: ['sleep','discard'],       label: '💤 Tab Sleep',     color: '#6b7280', match: a => a.id?.startsWith('tab-discard:') },
+  { aliases: ['cookie','cookies'],      label: '🍪 Cookies',       color: '#d97706', match: a => a.id?.startsWith('cookies:') },
+  { aliases: ['lock','screenlock'],     label: '🔒 Screen Lock',   color: '#64748b', match: a => a.id?.startsWith('screen-lock:') },
 ];
 
 // ── Slash parsing ────────────────────────────────────────────────────────────
@@ -98,6 +100,13 @@ function activateSel() {
 }
 
 // ── Query flow ───────────────────────────────────────────────────────────────
+function searchGotoStubs(q) {
+  return q ? [
+    { id: 'browser:search', title: `Search "${q}"`, desc: 'Search with default engine', emoji: '🔍' },
+    { id: 'browser:goto',   title: `Go to "${q}"`,  desc: 'Navigate to URL',            emoji: '🌐' },
+  ] : [];
+}
+
 function runQuery(raw) {
   results.setAttribute('data-loading', '1');
   if (activeFilter) {
@@ -108,12 +117,7 @@ function runQuery(raw) {
   if (p.kind === 'help')   { renderHelp(p.partial); return; }
   if (p.kind === 'filter') { setFilter(p.filter); input.value = p.query; }
 
-  const stubs = raw && !activeFilter ? [
-    { id: 'browser:search', title: `Search "${raw}"`, desc: 'Search with default engine', emoji: '🔍' },
-    { id: 'browser:goto',   title: `Go to "${raw}"`,  desc: 'Navigate to URL',            emoji: '🌐' },
-  ] : [];
-
-  renderResults(stubs, raw);
+  renderResults(activeFilter ? [] : searchGotoStubs(raw), raw);
   parent.postMessage({ type: 'captain:query', query: p.kind === 'filter' ? p.query : raw }, '*');
 }
 
@@ -128,10 +132,7 @@ window.addEventListener('message', e => {
   if (type === 'captain:results') {
     const all = e.data.actions || [];
     const visible = activeFilter ? all.filter(activeFilter.match) : all;
-    const stubs = input.value.trim() && !activeFilter ? [
-      { id: 'browser:search', title: `Search "${input.value.trim()}"`, desc: 'Search with default engine', emoji: '🔍' },
-      { id: 'browser:goto',   title: `Go to "${input.value.trim()}"`,  desc: 'Navigate to URL',            emoji: '🌐' },
-    ] : [];
+    const stubs = activeFilter ? [] : searchGotoStubs(input.value.trim());
     renderResults([...stubs, ...visible], input.value.trim());
   }
 });
