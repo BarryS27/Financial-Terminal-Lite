@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cookies — Captain</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body {
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 32px;
+}
+.cookie-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.20), var(--shadow-lg);
+  border-radius: var(--radius-lg);
+  padding: 32px 36px;
+  max-width: 560px;
+  width: 100%;
+  animation: fade-up 280ms var(--ease-out) both;
+}
+.cookie-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.cookie-header h1 { font-size: var(--text-lg); font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.cookie-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; background: var(--color-accent-dim);
+  border-radius: var(--radius-base); color: var(--color-accent); font-size: 18px;
+}
+#site-host { font-size: var(--text-sm); color: var(--color-text-muted); font-family: var(--font-mono); margin: 0 0 16px; }
+
+.toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.toolbar input { flex: 1; }
+
+.empty-state { text-align: center; color: var(--color-text-muted); font-size: var(--text-sm); padding: 32px 0; }
+
+#cookie-list { max-height: 360px; overflow-y: auto; margin-bottom: 14px; }
+.cookie-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 4px; border-bottom: 1px solid var(--color-border);
+}
+.cookie-row:last-child { border-bottom: none; }
+.cookie-info { flex: 1; min-width: 0; }
+.cookie-name  { font-size: var(--text-sm); font-weight: 500; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cookie-value { font-size: var(--text-xs); color: var(--color-text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cookie-meta  { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 2px; }
+.cookie-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.icon-btn {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--color-border); border-radius: var(--radius-base);
+  background: none; cursor: pointer; color: var(--color-text-muted); font-size: 12px;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.icon-btn:hover { color: var(--color-accent); border-color: var(--color-accent); }
+
+.footer-row { display: flex; gap: 8px; flex-wrap: wrap; }
+#import-file { display: none; }
+
+/* Modal */
+.modal-bg { position: fixed; inset: 0; background: oklch(0% 0 0 / 0.45); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 24px; }
+.modal-bg.hidden { display: none; }
+.modal-box { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: 24px 28px; max-width: 420px; width: 100%; max-height: 85vh; overflow-y: auto; }
+.modal-box h2 { font-size: var(--text-base); font-weight: 600; margin: 0 0 16px; }
+.modal-field { margin-bottom: 12px; }
+.modal-field label { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 4px; }
+.modal-check-row { display: flex; gap: 16px; font-size: var(--text-sm); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+#modal-error { color: oklch(45% 0.18 15); font-size: var(--text-xs); min-height: 16px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="cookie-card">
+  <div class="cookie-header">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="cookie-icon">🍪</div>
+      <h1>Cookies</h1>
+    </div>
+    <button class="btn btn-outline btn-sm" id="btn-refresh">Refresh</button>
+  </div>
+  <div id="site-host">—</div>
+
+  <div class="toolbar">
+    <input type="text" id="search-input" placeholder="Filter by name or value…">
+    <button class="btn btn-primary btn-sm" id="btn-add">+ Add</button>
+  </div>
+
+  <div id="cookie-list"></div>
+
+  <div class="footer-row">
+    <button class="btn btn-outline" id="btn-export">Export JSON</button>
+    <button class="btn btn-outline" id="btn-import">Import JSON</button>
+    <input type="file" id="import-file" accept="application/json">
+    <button class="btn btn-danger" id="btn-delete-all" style="margin-left:auto">Delete all</button>
+  </div>
+  <div class="status-bar" id="cookie-status"></div>
+</div>
+
+<div class="modal-bg hidden" id="modal-bg">
+  <div class="modal-box">
+    <h2 id="modal-title">Add Cookie</h2>
+    <div class="modal-field"><label for="c-name">Name</label><input type="text" id="c-name"></div>
+    <div class="modal-field"><label for="c-value">Value</label><input type="text" id="c-value"></div>
+    <div class="modal-field"><label for="c-domain">Domain</label><input type="text" id="c-domain" placeholder="example.com"></div>
+    <div class="modal-field"><label for="c-path">Path</label><input type="text" id="c-path" placeholder="/"></div>
+    <div class="modal-field modal-check-row">
+      <label><input type="checkbox" id="c-secure"> Secure</label>
+      <label><input type="checkbox" id="c-httponly"> HttpOnly</label>
+    </div>
+    <input type="hidden" id="c-storeid">
+    <div id="modal-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" id="btn-modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="btn-modal-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="cookies.js"></script>
+</body>
+</html>

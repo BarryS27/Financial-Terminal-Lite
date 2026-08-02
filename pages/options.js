@@ -1,6 +1,8 @@
 'use strict';
 // Captain Options — ACDN design
 
+import { esc } from './shared.js';
+
 // ── Nav ───────────────────────────────────────────────────────────────────────
 const hash = location.hash.replace('#', '');
 const _defaultPanel = document.querySelector('.nav-item[data-panel]')?.dataset?.panel;
@@ -24,18 +26,16 @@ function setStatus(id, msg, isErr = false) {
   if (!isErr) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3000);
 }
 
-function esc(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
 // ── WebRTC ────────────────────────────────────────────────────────────────────
 async function loadWebRTC() {
   const res = await chrome.runtime.sendMessage({ type: 'webrtc:get' }).catch(() => null);
-  const val = res?.value ?? 'default';
-  const el  = document.querySelector(`input[name='webrtc'][value='${val}']`);
+  const mode = res?.mode ?? 'off';
+  const el   = document.querySelector(`input[name='webrtc'][value='${mode}']`);
   if (el) el.checked = true;
 }
 document.querySelectorAll('input[name="webrtc"]').forEach(r => {
   r.addEventListener('change', async () => {
-    const res = await chrome.runtime.sendMessage({ type: 'webrtc:set', value: r.value });
+    const res = await chrome.runtime.sendMessage({ type: 'webrtc:set', mode: r.value });
     setStatus('webrtc-status', res?.ok ? 'Saved. ✓' : 'Error.', !res?.ok);
   });
 });
@@ -156,9 +156,8 @@ const UA_PRESETS = [
 
 async function loadUA() {
   const res = await chrome.runtime.sendMessage({ type: 'ua:get' }).catch(() => null);
-  const active = res?.ua || '';
-  const enabled = !!res?.enabled;
-  document.getElementById('ua-enabled').checked = enabled;
+  const active = res?.active?.ua || '';
+  document.getElementById('ua-enabled').checked = !!res?.active;
   document.getElementById('ua-custom').value    = active;
 
   const chips = document.getElementById('ua-chips');
@@ -190,40 +189,41 @@ document.getElementById('ua-reset').addEventListener('click', async () => {
 loadUA();
 
 // ── Focus Guard ───────────────────────────────────────────────────────────────
+// Rewired to Focus Guard's real message API. The previous version called
+// fg:get / fg:enable / fg:disable / fg:remove-set / fg:add-set — none of
+// which exist on the provider side, so this panel silently did nothing.
+// Focus Guard stores state as numbered per-set keys (disable{N}, sites{N},
+// setName{N}, ...), not a `sets` array, so we read/write through the
+// fg:summary / fg:set-disabled / fg:set-sites handlers that expose that.
 async function loadFocusGuard() {
-  const res = await chrome.runtime.sendMessage({ type: 'fg:get' }).catch(() => null);
+  const res = await chrome.runtime.sendMessage({ type: 'fg:summary' }).catch(() => null);
   if (!res?.ok) return;
-  document.getElementById('fg-enabled').checked = !!res.enabled;
   const list = document.getElementById('fg-sets-list');
   list.innerHTML = '';
-  (res.sets || []).forEach((s, i) => {
+  res.sets.forEach((s) => {
     const div = document.createElement('div');
     div.className = 'field-group';
     div.style.marginBottom = '10px';
     div.innerHTML = `
       <div class="field">
-        <div class="field-label"><strong>${esc(s.name || `Rule ${i+1}`)}</strong><span>${(s.patterns||[]).join(', ')}</span></div>
+        <div class="field-label"><strong>${esc(s.name)}</strong><span>${s.sites ? esc(s.sites) : 'No sites configured'}</span></div>
         <div class="field-control">
-          <button class="btn btn-danger btn-sm" data-idx="${i}">Remove</button>
+          <label class="toggle"><input type="checkbox" data-set="${s.set}" data-role="fg-set-toggle" ${s.disabled ? '' : 'checked'}><span class="toggle-track"></span></label>
+          <button class="btn btn-outline btn-sm" data-set="${s.set}" data-role="fg-set-edit">Edit sites</button>
         </div>
       </div>`;
-    div.querySelector('[data-idx]').addEventListener('click', async () => {
-      await chrome.runtime.sendMessage({ type: 'fg:remove-set', index: i });
+    div.querySelector('[data-role=fg-set-toggle]').addEventListener('change', async function () {
+      await chrome.runtime.sendMessage({ type: 'fg:set-disabled', set: s.set, disabled: !this.checked });
+    });
+    div.querySelector('[data-role=fg-set-edit]').addEventListener('click', async () => {
+      const sites = prompt(`Sites for "${s.name}" (one per line or comma-separated):`, s.sites);
+      if (sites == null) return;
+      await chrome.runtime.sendMessage({ type: 'fg:set-sites', set: s.set, sites });
       loadFocusGuard();
     });
     list.appendChild(div);
   });
 }
-document.getElementById('fg-enabled').addEventListener('change', async function() {
-  await chrome.runtime.sendMessage({ type: this.checked ? 'fg:enable' : 'fg:disable' });
-});
-document.getElementById('fg-add-set').addEventListener('click', async () => {
-  const patterns = prompt('Enter domains to block (comma-separated):\nexample: youtube.com, twitter.com');
-  if (!patterns) return;
-  const name = prompt('Name this rule (optional):') || 'Focus rule';
-  await chrome.runtime.sendMessage({ type: 'fg:add-set', set: { name, patterns: patterns.split(',').map(s=>s.trim()).filter(Boolean) }});
-  loadFocusGuard();
-});
 document.getElementById('fg-save').addEventListener('click', async () => {
   setStatus('fg-status', 'Saved. ✓');
 });
@@ -320,9 +320,6 @@ document.getElementById('ws-add').addEventListener('click', async () => {
 });
 loadWorkspaces();
 
-});
-loadAnnotations();
-
 // ── AI ────────────────────────────────────────────────────────────────────────
 async function loadAI() {
   const res = await chrome.runtime.sendMessage({ type: 'ai:get-config' });
@@ -365,7 +362,6 @@ document.getElementById('ai-open-chat').addEventListener('click', async () => {
 });
 loadAI();
 
-
 // ── Search filter (merged into Focus Guard) ───────────────────────────────────
 async function loadBlRules() {
   const res = await chrome.runtime.sendMessage({ type: 'bl:get-rules' });
@@ -383,3 +379,47 @@ document.getElementById('bl-save')?.addEventListener('click', async () => {
 
 loadBlRules();
 
+// ── Security (Vault & 2FA / Cookies / Screen Lock) ────────────────────────────
+document.getElementById('open-vault').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('pages/vault.html') });
+});
+document.getElementById('open-cookies').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('pages/cookies.html') });
+});
+
+async function loadScreenLock() {
+  const res = await chrome.runtime.sendMessage({ type: 'screen-lock:status' }).catch(() => null);
+  if (!res?.ok) return;
+  document.getElementById('lock-pw-status').textContent = res.hasPassword ? 'Password set' : 'No password set yet';
+  document.getElementById('lock-set-pw').textContent = res.hasPassword ? 'Change' : 'Set';
+  document.getElementById('lock-ask-startup').checked = !!res.askOnStartup;
+  document.getElementById('lock-now').disabled = !res.hasPassword;
+}
+
+document.getElementById('lock-set-pw').addEventListener('click', async () => {
+  const hasPw = document.getElementById('lock-set-pw').textContent === 'Change';
+  if (hasPw) {
+    const oldPassword = prompt('Current password:');
+    if (oldPassword == null) return;
+    const newPassword = prompt('New password:');
+    if (!newPassword) return;
+    const res = await chrome.runtime.sendMessage({ type: 'screen-lock:change-password', oldPassword, newPassword });
+    setStatus('lock-status', res.ok ? 'Password changed. ✓' : 'Incorrect current password.', !res.ok);
+  } else {
+    const newPassword = prompt('Choose a password for Screen Lock:');
+    if (!newPassword) return;
+    await chrome.runtime.sendMessage({ type: 'screen-lock:set-password', password: newPassword });
+    setStatus('lock-status', 'Password set. ✓');
+  }
+  loadScreenLock();
+});
+
+document.getElementById('lock-ask-startup').addEventListener('change', async function () {
+  await chrome.runtime.sendMessage({ type: 'screen-lock:set-ask-on-startup', enabled: this.checked });
+});
+
+document.getElementById('lock-now').addEventListener('click', async () => {
+  await chrome.runtime.sendMessage({ type: 'screen-lock:lock-now' });
+});
+
+loadScreenLock();
