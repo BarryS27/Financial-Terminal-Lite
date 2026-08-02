@@ -13,7 +13,7 @@
     // Save original prototype BEFORE replacing self[name]
     const originalProto = original.prototype;
 
-    const blocked = function () { throw new Error('WebRTC blocked by Captain'); };
+    const blocked = function () { BLOCKED_ERROR(); };
     try { Object.defineProperty(blocked, 'name', { value: original.name }); } catch {}
     try { Object.defineProperty(blocked, 'length', { value: original.length }); } catch {}
     try { Object.setPrototypeOf(blocked, Object.getPrototypeOf(original)); } catch {}
