@@ -181,5 +181,3 @@ export const handlers = {
   },
   // Streaming chat: handled via port connection in background.js
 };
-
-

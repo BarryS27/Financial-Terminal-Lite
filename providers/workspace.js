@@ -105,23 +105,20 @@ async function activateWorkspace(id, source = 'manual') {
   return ws;
 }
 
+const stripWww = hostname => hostname.replace(/^www\./, '');
+
 // ── Auto-trigger based on domain ──────────────────────────────────────────────
 async function checkAutoTrigger(url) {
   const workspaces = await loadWorkspaces();
-  let hostname = '';
-  try { hostname = new URL(url).hostname.replace(/^www\./, ''); } catch { return; }
+  let hostname;
+  try { hostname = stripWww(new URL(url).hostname); } catch { return; }
 
   for (const ws of workspaces) {
     if (!ws.domains?.length) continue;
-    const matches = ws.domains.some(d => {
-      if (d.startsWith('*.')) return hostname.endsWith(d.slice(1));
-      return hostname === d || hostname.endsWith('.' + d);
-    });
+    const matches = ws.domains.some(d =>
+      d.startsWith('*.') ? hostname.endsWith(d.slice(1)) : hostname === d || hostname.endsWith(`.${d}`));
     if (matches) {
-      const current = await getActive();
-      if (current !== ws.id) {
-        await activateWorkspace(ws.id, 'auto');
-      }
+      if ((await getActive()) !== ws.id) await activateWorkspace(ws.id, 'auto');
       return;
     }
   }
@@ -166,28 +163,49 @@ async function recordVisit(domain, wsId) {
   }
 }
 
+const NEW_WORKSPACE_DEFAULTS = { icon: '📁', proxy: 'system', ua: null, focusSets: [], tabDiscardAfter: 10 * 60, domains: [], extensions: {} };
+
+async function createWorkspace(data) {
+  const workspaces = await loadWorkspaces();
+  const newWs = { id: `ws_${Date.now()}`, ...NEW_WORKSPACE_DEFAULTS, ...data };
+  await saveWorkspaces([...workspaces, newWs]);
+  return newWs;
+}
+
+async function updateWorkspace(id, patch) {
+  const workspaces = await loadWorkspaces();
+  const idx = workspaces.findIndex(w => w.id === id);
+  if (idx < 0) return null;
+  const updated = { ...workspaces[idx], ...patch };
+  await saveWorkspaces(workspaces.with(idx, updated));
+  return updated;
+}
+
+async function deleteWorkspace(id) {
+  const workspaces = await loadWorkspaces();
+  if (workspaces.find(w => w.id === id)?.builtIn) return { ok: false, error: 'Cannot delete built-in workspace' };
+  const filtered = workspaces.filter(w => w.id !== id);
+  if (filtered.length === workspaces.length) return { ok: false, error: 'Workspace not found' };
+  await saveWorkspaces(filtered);
+  if ((await getActive()) === id) await activateWorkspace('default');
+  return { ok: true };
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
+async function handleTabUrl(url) {
+  await checkAutoTrigger(url);
+  try { await recordVisit(stripWww(new URL(url).hostname), await getActive()); } catch {}
+}
+
 export async function init() {
   // Monitor navigation for auto-trigger
   chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-    try {
-      const tab = await chrome.tabs.get(tabId);
-      if (tab?.url) {
-        await checkAutoTrigger(tab.url);
-        const host = new URL(tab.url).hostname.replace(/^www\./, '');
-        await recordVisit(host, await getActive());
-      }
-    } catch {}
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (tab?.url) await handleTabUrl(tab.url);
   });
 
-  chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
-    if (info.url && tab.active) {
-      await checkAutoTrigger(info.url);
-      try {
-        const host = new URL(info.url).hostname.replace(/^www\./, '');
-        await recordVisit(host, await getActive());
-      } catch {}
-    }
+  chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    if (info.url && tab.active) handleTabUrl(info.url);
   });
 
   register('workspace', async (q) => {
@@ -214,34 +232,20 @@ export async function init() {
   });
 
   expose('workspace', {
-    list:          loadWorkspaces,
+    list: loadWorkspaces,
     getActive,
-    activate:      (id, source) => activateWorkspace(id, source),
-    create:        async (data) => {
-      const ws = await loadWorkspaces();
-      const id = `ws_${Date.now()}`;
-      const newWs = { id, icon: '📁', proxy: 'system', ua: null, focusSets: [],
-        tabDiscardAfter: 10 * 60, domains: [], extensions: {}, ...data };
-      ws.push(newWs);
-      await saveWorkspaces(ws);
-      return newWs;
+    activate: (id, source) => activateWorkspace(id, source),
+    create: createWorkspace,
+    update: async (id, patch) => {
+      const updated = await updateWorkspace(id, patch);
+      if (!updated) throw new Error('Workspace not found');
+      return updated;
     },
-    update:        async (id, patch) => {
-      const ws  = await loadWorkspaces();
-      const idx = ws.findIndex(w => w.id === id);
-      if (idx < 0) throw new Error('Workspace not found');
-      ws[idx] = { ...ws[idx], ...patch };
-      await saveWorkspaces(ws);
-      return ws[idx];
+    delete: async (id) => {
+      const res = await deleteWorkspace(id);
+      if (!res.ok) throw new Error(res.error);
     },
-    delete:        async (id) => {
-      const ws = await loadWorkspaces();
-      const filtered = ws.filter(w => w.id !== id);
-      if (filtered.length === ws.length) throw new Error('Workspace not found');
-      await saveWorkspaces(filtered);
-      if ((await getActive()) === id) await activateWorkspace('default');
-    },
-    getExtensions:  getRuntimeView,
+    getExtensions: getRuntimeView,
     checkAutoTrigger,
   });
 }
@@ -253,39 +257,17 @@ export function handleWorkspaceAction(type) {
 }
 
 export const handlers = {
-  'ws:list':          async () => ({ ok: true, workspaces: await loadWorkspaces() }),
-  'ws:active':        async () => ({ ok: true, id: await getActive() }),
-  'ws:activate':      async msg => {
-    const ws = await activateWorkspace(msg.id);
-    return { ok: true, workspace: ws };
+  'ws:list':   async () => ({ ok: true, workspaces: await loadWorkspaces() }),
+  'ws:active': async () => ({ ok: true, id: await getActive() }),
+  'ws:activate': async msg => ({ ok: true, workspace: await activateWorkspace(msg.id) }),
+  'ws:create': async msg => ({ ok: true, workspace: await createWorkspace(msg.data) }),
+  'ws:update': async msg => {
+    const updated = await updateWorkspace(msg.id, msg.patch);
+    return updated ? { ok: true, workspace: updated } : { ok: false, error: 'Not found' };
   },
-  'ws:create':        async msg => {
-    const ws = await loadWorkspaces();
-    const id = `ws_${Date.now()}`;
-    const newWs = { id, icon: '📁', proxy: 'system', ua: null, focusSets: [],
-      tabDiscardAfter: 10 * 60, domains: [], extensions: {}, ...msg.data };
-    ws.push(newWs);
-    await saveWorkspaces(ws);
-    return { ok: true, workspace: newWs };
-  },
-  'ws:update':        async msg => {
-    const ws  = await loadWorkspaces();
-    const idx = ws.findIndex(w => w.id === msg.id);
-    if (idx < 0) return { ok: false, error: 'Not found' };
-    ws[idx] = { ...ws[idx], ...msg.patch };
-    await saveWorkspaces(ws);
-    return { ok: true, workspace: ws[idx] };
-  },
-  'ws:delete':        async msg => {
-    const ws = await loadWorkspaces();
-    if (ws.find(w => w.id === msg.id)?.builtIn) return { ok: false, error: 'Cannot delete built-in workspace' };
-    const filtered = ws.filter(w => w.id !== msg.id);
-    if (filtered.length === ws.length) return { ok: false, error: 'Workspace not found' };
-    await saveWorkspaces(filtered);
-    return { ok: true };
-  },
+  'ws:delete': async msg => deleteWorkspace(msg.id),
   'ws:get-extensions': async () => ({ ok: true, extensions: await getRuntimeView() }),
-  'ws:open-options':  async () => {
+  'ws:open-options': async () => {
     chrome.tabs.create({ url: chrome.runtime.getURL('pages/options.html#workspaces') });
     return { ok: true };
   },

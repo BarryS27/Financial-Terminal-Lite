@@ -131,6 +131,9 @@ body { display: block; }
 
       <div class="nav-section-label">Tools</div>
       <button class="nav-item" data-panel="ai"><span class="nav-icon">◆</span>AI</button>
+
+      <div class="nav-section-label">Security</div>
+      <button class="nav-item" data-panel="security"><span class="nav-icon">🔐</span>Vault &amp; Security</button>
     </nav>
   </aside>
 
@@ -185,12 +188,12 @@ body { display: block; }
           <div class="field-control"><span class="badge">/ai</span></div>
         </div>
         <div class="field">
-          <div class="field-label"><strong>Vault</strong></div>
+          <div class="field-label"><strong>Vault &amp; 2FA</strong></div>
           <div class="field-control"><span class="badge">/vault</span></div>
         </div>
         <div class="field">
-          <div class="field-label"><strong>Annotations</strong></div>
-          <div class="field-control"><span class="badge">/note</span></div>
+          <div class="field-label"><strong>Cookies</strong></div>
+          <div class="field-control"><span class="badge">/cookie</span></div>
         </div>
       </div>
     </section>
@@ -315,20 +318,16 @@ body { display: block; }
       <p class="panel-desc">WebRTC can leak your real IP address even through a proxy. Choose a policy that matches your privacy needs.</p>
       <div class="field-group" id="webrtc-options">
         <div class="field">
-          <div class="field-label"><strong>Default</strong><span>Browser decides — may expose local IP</span></div>
-          <div class="field-control"><input type="radio" name="webrtc" value="default" id="wrt-default"></div>
+          <div class="field-label"><strong>Off</strong><span>Browser decides — may expose local IP</span></div>
+          <div class="field-control"><input type="radio" name="webrtc" value="off" id="wrt-off"></div>
         </div>
         <div class="field">
-          <div class="field-label"><strong>Disable non-proxied UDP</strong><span>Prevents leaks while keeping WebRTC working</span></div>
-          <div class="field-control"><input type="radio" name="webrtc" value="disable_non_proxied_udp" id="wrt-noproxy"></div>
+          <div class="field-label"><strong>Partial block</strong><span>Recommended — prevents IP leaks while keeping WebRTC working</span></div>
+          <div class="field-control"><input type="radio" name="webrtc" value="partial" id="wrt-partial"></div>
         </div>
         <div class="field">
-          <div class="field-label"><strong>Force proxy only</strong><span>Routes all WebRTC through your proxy</span></div>
-          <div class="field-control"><input type="radio" name="webrtc" value="proxy_only" id="wrt-proxy"></div>
-        </div>
-        <div class="field">
-          <div class="field-label"><strong>Disable WebRTC entirely</strong><span>Most secure — breaks video calls</span></div>
-          <div class="field-control"><input type="radio" name="webrtc" value="disable" id="wrt-disable"></div>
+          <div class="field-label"><strong>Full block</strong><span>Most secure — disables WebRTC entirely, breaks video calls</span></div>
+          <div class="field-control"><input type="radio" name="webrtc" value="full" id="wrt-full"></div>
         </div>
       </div>
       <div class="btn-row"><div class="status-bar" id="webrtc-status"></div></div>
@@ -339,15 +338,9 @@ body { display: block; }
       <div class="panel-head"><h1>Focus</h1></div>
       <p class="panel-desc">Block distracting sites during focus sessions. Rules are simple: add a site, set times if needed. Captain handles the rest.</p>
       <div id="fg-content">
-        <div class="field-group">
-          <div class="field">
-            <div class="field-label"><strong>Focus mode</strong></div>
-            <div class="field-control"><label class="toggle"><input type="checkbox" id="fg-enabled"><span class="toggle-track"></span></label></div>
-          </div>
-        </div>
+        <p class="panel-desc" style="margin-top:-8px">Each set below can be turned on or off independently, and has its own site list.</p>
         <div id="fg-sets-list"></div>
         <div class="btn-row">
-          <button class="btn btn-outline" id="fg-add-set">+ Add site rule</button>
           <button class="btn btn-primary" id="fg-save">Save</button>
         </div>
 
@@ -449,8 +442,44 @@ body { display: block; }
       <div class="status-bar" id="ai-status"></div>
     </section>
 
+    <!-- Security -->
+    <section class="panel" id="panel-security">
+      <div class="panel-head"><h1>Vault &amp; Security</h1></div>
+      <p class="panel-desc">Password vault, per-site cookies, two-factor codes, and a password-gated browser lock — all local to this device.</p>
+
+      <h3>Quick access</h3>
+      <div class="field-group">
+        <div class="field">
+          <div class="field-label"><strong>Password vault</strong><span>Unlock your local .kdbx file — logins, autofill, and 2FA codes</span></div>
+          <div class="field-control"><button class="btn btn-outline btn-sm" id="open-vault">Open Vault →</button></div>
+        </div>
+        <div class="field">
+          <div class="field-label"><strong>Cookies</strong><span>View, edit, export, and import cookies for the active site</span></div>
+          <div class="field-control"><button class="btn btn-outline btn-sm" id="open-cookies">Open Cookies →</button></div>
+        </div>
+      </div>
+
+      <h3>Screen Lock</h3>
+      <p class="panel-desc">Hide all your open windows behind a password. Useful when stepping away from a shared machine.</p>
+      <div class="field-group">
+        <div class="field">
+          <div class="field-label"><strong>Password</strong><span id="lock-pw-status">Checking…</span></div>
+          <div class="field-control"><button class="btn btn-outline btn-sm" id="lock-set-pw">Set / Change</button></div>
+        </div>
+        <div class="field">
+          <div class="field-label"><strong>Lock on browser startup</strong><span>Ask for the password every time Chrome opens</span></div>
+          <div class="field-control"><label class="toggle"><input type="checkbox" id="lock-ask-startup"><span class="toggle-track"></span></label></div>
+        </div>
+        <div class="field">
+          <div class="field-label"><strong>Lock now</strong><span>Immediately hide all windows</span></div>
+          <div class="field-control"><button class="btn btn-primary btn-sm" id="lock-now" disabled>Lock now</button></div>
+        </div>
+      </div>
+      <div class="status-bar" id="lock-status"></div>
+    </section>
+
   </main>
 </div>
-<script src="options.js"></script>
+<script type="module" src="options.js"></script>
 </body>
 </html>

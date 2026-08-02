@@ -2,7 +2,7 @@
 
 import { getCounts } from './usage.js';
 
-const _providerRE = /^(webrtc:|fg:|ua:|bl:|proxy:|ws:|tab:|vault:|ai:)/;
+const _providerRE = /^(webrtc:|fg:|ua:|bl:|proxy:|ws:|tab:|vault:|ai:|cookies:|screen-lock:)/;
 const providers   = new Map();
 
 export const register   = (id, fn) => providers.set(id, fn);

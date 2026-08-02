@@ -113,9 +113,10 @@
     } else if (id.startsWith('ws:activate:')) {
       // ws:activate:<workspace-id>
       msg = { type: 'ws:activate', id: id.slice('ws:activate:'.length) };
-    } else if (id.startsWith('vault:fill:')) {
-      msg = { type: 'vault:fill:' + id.slice('vault:fill:'.length) };
     } else {
+      // Covers vault:fill:<uuid>, vault:copy-otp:<uuid>, webrtc:<mode>, and any
+      // other id that IS the message type verbatim — background.js's dynamic
+      // handler resolvers parse the suffix themselves.
       msg = { type: id, ...action };
     }
 

@@ -1,11 +1,7 @@
 'use strict';
 // vault.js — Vault UI logic (runs in pages/vault.html)
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const $ = id => document.getElementById(id);
-const send = (type, data = {}) =>
-  chrome.runtime.sendMessage({ type, ...data });
-
+import { $, send, esc, copyText } from './shared.js';
 
 // ── Page-side IndexedDB (mirrors providers/vault.js) ─────────────────────────
 const _IDB_DB    = 'captain-vault';
@@ -42,9 +38,6 @@ async function _pickFile() {
 
 let _entries = [];   // full entry list (no passwords except via get-password)
 let _fileName = '';
-
-// Inject copy-flash animation style once
-document.head.insertAdjacentHTML('beforeend', '<style>@keyframes fadeout{to{opacity:0}}</style>');
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -146,6 +139,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
     $(`tab-${tab}`).classList.add('active');
+    if (tab === 'totp') startTotpTicker(); else stopTotpTicker();
   });
 });
 
@@ -185,14 +179,21 @@ function renderEntries(entries) {
     item.innerHTML = `
       <div class="entry-avatar">${avatarInner}</div>
       <div class="entry-info">
-        <div class="entry-title">${esc(e.title || '(no title)')}</div>
+        <div class="entry-title">${esc(e.title || '(no title)')}${e.hasOtp ? ' <span class="otp-badge" title="Has 2FA code">2FA</span>' : ''}</div>
         <div class="entry-sub">${esc(e.username || e.url || '')}</div>
       </div>
       <div class="entry-actions">
+        ${e.hasOtp ? '<button class="icon-btn" title="Copy 2FA code" data-action="copy-otp">🔢</button>' : ''}
         <button class="icon-btn" title="Copy username" data-action="copy-user">👤</button>
         <button class="icon-btn" title="Copy password" data-action="copy-pw">🔑</button>
         <button class="icon-btn" title="Edit"          data-action="edit">✏️</button>
       </div>`;
+
+    item.querySelector('[data-action=copy-otp]')?.addEventListener('click', async e2 => {
+      e2.stopPropagation();
+      const r = await send('vault:totp-code', { uuid: e.uuid });
+      if (r.ok) copyText(r.code, '2FA code copied!');
+    });
 
     item.querySelector('[data-action=copy-user]').addEventListener('click', e2 => {
       e2.stopPropagation();
@@ -219,24 +220,66 @@ $('search-input').addEventListener('input', e => {
   _searchTimer = setTimeout(() => refreshEntries(e.target.value.trim()), 180);
 });
 
-// ── Copy helper ───────────────────────────────────────────────────────────────
-function copyText(text) {
-  navigator.clipboard.writeText(text).catch(() => {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
-    document.execCommand('copy'); ta.remove();
-  });
-  // Visual flash
-  const orig = document.activeElement;
-  const flash = document.createElement('div');
-  flash.textContent = 'Copied!';
-  flash.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
-    'background:#22c55e;color:#fff;padding:8px 20px;border-radius:20px;font-size:13px;' +
-    'font-weight:600;z-index:9999;pointer-events:none;animation:fadeout .8s .8s forwards';
-  document.body.appendChild(flash);
-  setTimeout(() => flash.remove(), 1700);
+// ── 2FA Codes tab ─────────────────────────────────────────────────────────────
+// Codes are recomputed every tick (not just the countdown ring) so they roll
+// over correctly at period boundaries; providers/vault.js derives them from
+// each entry's `otp` field on demand, so this stays cheap and always correct.
+let _totpTickHandle = null;
+
+function startTotpTicker() {
+  if (_totpTickHandle) return;
+  refreshTotp();
+  _totpTickHandle = setInterval(refreshTotp, 1000);
 }
+function stopTotpTicker() {
+  clearInterval(_totpTickHandle);
+  _totpTickHandle = null;
+}
+
+async function refreshTotp() {
+  const res = await send('vault:totp-list');
+  if (!res.ok) return;
+  renderTotp(res.accounts);
+}
+
+function formatCode(code) {
+  return code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code;
+}
+
+function renderTotp(accounts) {
+  const list = $('totp-list');
+  if (!accounts.length) {
+    list.innerHTML = '<div class="empty-state">No entries have a 2FA code yet. Add one from the Entries tab.</div>';
+    return;
+  }
+  // Reuse existing rows in place so codes update without any layout flicker.
+  const wantedUuids = new Set(accounts.map(a => a.uuid));
+  for (const child of [...list.children]) if (!wantedUuids.has(child.dataset.uuid)) child.remove();
+
+  for (const a of accounts) {
+    let row = list.querySelector(`[data-uuid="${a.uuid}"]`);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'account-row';
+      row.dataset.uuid = a.uuid;
+      row.innerHTML = `
+        <div class="account-ring" data-role="ring"><span data-role="ring-text"></span></div>
+        <div class="account-info">
+          <div class="account-issuer">${esc(a.title)}</div>
+          <div class="account-label">${esc(a.username || '')}</div>
+          <div class="account-code" data-role="code"></div>
+        </div>
+        <button class="icon-btn" title="Copy code" data-action="copy">📋</button>`;
+      row.querySelector('[data-action=copy]').addEventListener('click', () => copyText($(`[data-uuid="${a.uuid}"] [data-role=code]`).textContent.replace(/\s/g, ''), '2FA code copied!'));
+      list.appendChild(row);
+    }
+    row.querySelector('[data-role=code]').textContent = formatCode(a.code);
+    row.querySelector('[data-role=ring-text]').textContent = a.secondsLeft;
+    row.querySelector('[data-role=ring]').style.setProperty('--pct', `${(a.secondsLeft / a.period) * 100}%`);
+  }
+}
+
+window.addEventListener('beforeunload', stopTotpTicker);
 
 // ── Modal (add / edit) ────────────────────────────────────────────────────────
 function openModal(entry = null) {
@@ -247,6 +290,7 @@ function openModal(entry = null) {
   $('entry-password').value = '';   // never pre-fill password field from cache
   $('entry-url').value      = entry?.url     ?? '';
   $('entry-notes').value    = entry?.notes   ?? '';
+  $('entry-otp').value      = entry?.otp     ?? '';
   $('modal-error').textContent = '';
   $('btn-modal-delete').style.display = entry ? 'inline-block' : 'none';
 
@@ -281,6 +325,7 @@ $('btn-modal-save').addEventListener('click', async () => {
     password: $('entry-password').value,
     url:      $('entry-url').value.trim(),
     notes:    $('entry-notes').value.trim(),
+    otp:      $('entry-otp').value.trim(),
   };
   const res = await send('vault:save-entry', { entry });
   $('btn-modal-save').disabled = false;
@@ -303,6 +348,32 @@ $('btn-modal-delete').addEventListener('click', async () => {
     await refreshEntries($('search-input').value.trim());
   } else {
     $('modal-error').textContent = res.msg || 'Delete failed.';
+  }
+});
+
+// ── TOTP: scan a QR image straight into the entry's otp field ────────────────
+// Uses the browser's native BarcodeDetector (Chrome 83+); no bundled decoder.
+$('btn-scan-qr').addEventListener('click', () => $('qr-file').click());
+$('qr-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!('BarcodeDetector' in window)) {
+    $('modal-error').textContent = 'QR scanning is not supported in this browser — paste the otpauth:// URI instead.';
+    return;
+  }
+  try {
+    const bitmap = await createImageBitmap(file);
+    const [result] = await new BarcodeDetector({ formats: ['qr_code'] }).detect(bitmap);
+    if (!result) { $('modal-error').textContent = 'No QR code found in that image.'; return; }
+    const parsed = await send('vault:totp-parse-uri', { uri: result.rawValue });
+    if (!parsed.ok) { $('modal-error').textContent = 'That QR code is not a 2FA setup code.'; return; }
+    $('entry-otp').value = parsed.otp;
+    if (!$('entry-title').value.trim()) $('entry-title').value = parsed.issuer || parsed.label || '';
+    if (!$('entry-username').value.trim()) $('entry-username').value = parsed.label || '';
+    $('modal-error').textContent = '';
+  } catch (err) {
+    $('modal-error').textContent = `Could not read QR image: ${err.message || err}`;
   }
 });
 
@@ -380,13 +451,6 @@ $('btn-copy-gen').addEventListener('click', () => {
   const pw = $('gen-output').textContent;
   if (pw && !pw.startsWith('(')) copyText(pw);
 });
-
-// ── Escape helper ─────────────────────────────────────────────────────────────
-function esc(s) {
-  return String(s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 init();

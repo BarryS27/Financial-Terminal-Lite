@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Locked — Captain</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.lock-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.20), var(--shadow-lg);
+  border-radius: var(--radius-lg);
+  padding: 36px 32px; max-width: 340px; width: 100%; text-align: center;
+  animation: fade-up 280ms var(--ease-out) both;
+}
+.lock-icon {
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;
+  width: 52px; height: 52px; background: var(--color-accent-dim);
+  border-radius: 50%; color: var(--color-accent); font-size: 24px;
+}
+.lock-card h1 { font-size: var(--text-lg); font-weight: 600; margin: 0 0 6px; }
+.lock-card p { font-size: var(--text-sm); color: var(--color-text-muted); margin: 0 0 20px; }
+.pw-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.pw-row input { flex: 1; }
+#btn-unlock, #btn-setup { width: 100%; }
+</style>
+</head>
+<body>
+<div class="lock-card">
+  <!-- Unlock view -->
+  <div id="lock-view">
+    <div class="lock-icon">🔒</div>
+    <h1>Browser Locked</h1>
+    <p>Enter your password to continue.</p>
+    <div class="pw-row">
+      <input type="password" id="unlock-pw" placeholder="Password" autocomplete="current-password">
+      <button class="btn btn-outline btn-sm" id="toggle-unlock-pw" type="button">Show</button>
+    </div>
+    <button class="btn btn-primary" id="btn-unlock">Unlock</button>
+    <div class="status-bar" id="unlock-error"></div>
+  </div>
+
+  <!-- First-time setup view -->
+  <div id="setup-view" style="display:none">
+    <div class="lock-icon">🔒</div>
+    <h1>Set a Lock Password</h1>
+    <p>Choose a password to protect Screen Lock.</p>
+    <div class="pw-row">
+      <input type="password" id="setup-pw" placeholder="New password" autocomplete="new-password">
+      <button class="btn btn-outline btn-sm" id="toggle-setup-pw" type="button">Show</button>
+    </div>
+    <div class="pw-row"><input type="password" id="setup-pw-confirm" placeholder="Confirm password" autocomplete="new-password"></div>
+    <button class="btn btn-primary" id="btn-setup">Set Password</button>
+    <div class="status-bar" id="setup-error"></div>
+  </div>
+</div>
+<script type="module" src="screen-lock.js"></script>
+</body>
+</html>

@@ -1,4 +1,6 @@
 'use strict';
+import { esc } from './shared.js';
+
 const _persistedId = sessionStorage.getItem('captain-ai-conv-id');
 const CONV_ID = _persistedId || ('conv_' + Date.now());
 if (!_persistedId) sessionStorage.setItem('captain-ai-conv-id', CONV_ID);
@@ -37,10 +39,6 @@ function appendBubble(role, content, streaming = false) {
   wrap.appendChild(div);
   wrap.scrollTop = wrap.scrollHeight;
   return div.querySelector('.bubble');
-}
-
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 async function send() {

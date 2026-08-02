@@ -48,7 +48,7 @@ async function registerFullBlock() {
 }
 
 async function unregisterFullBlock() {
-  try { await chrome.scripting.unregisterContentScripts({ ids: [FULL_BLOCK_CS_ID] }); } catch (e) {}
+  try { await chrome.scripting.unregisterContentScripts({ ids: [FULL_BLOCK_CS_ID] }); } catch {}
 }
 
 export async function applyMode(mode) {
@@ -86,5 +86,14 @@ export const handlers = {
     const mode = (await get(MODE_KEY)) ?? 'off';
     return { ok: true, mode };
   },
-
 };
+
+// Dynamic per-mode palette actions (mirror the proxy:switch:<name> /
+// ws:activate:<id> pattern) — clicking "WebRTC: Full block" etc. sends
+// `webrtc:${mode}` as the message type, which needs to resolve here since
+// it isn't a literal key in `handlers` above.
+export function handleWebrtcAction(type) {
+  const mode = type && Object.keys(MODES).find(m => type === `webrtc:${m}`);
+  if (!mode) return null;
+  return () => handlers['webrtc:set']({ mode });
+}
