@@ -2,7 +2,7 @@
 
 (used by myself)
 
-Overall, this is a chrome extension that has the ability of these (and thx to these projects):
+Overall, this is a chrome extension that has the ability of these (and inspired by these projects):
 - Omni
 - LeechBlock NG
 - uBlacklist
@@ -13,3 +13,5 @@ Overall, this is a chrome extension that has the ability of these (and thx to th
 - Extensity-Plus
 - Extensity-Ultra
 - Page Assist
+- Cookie Editor
+- Chrome Lockdown
