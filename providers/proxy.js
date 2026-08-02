@@ -96,46 +96,60 @@ async function paletteItems(q) {
   return items;
 }
 
+const NEW_PROFILE_DEFAULTS = { color: '#99ccee', type: 'fixed', protocol: 'http', host: '', port: 8080, bypass: ['localhost', '127.0.0.1'] };
+
+async function createProfile(name, profile) {
+  const ps = await loadCustom();
+  if (BUILTINS.some(b => b.name === name) || ps.some(p => p.name === name)) return { ok: false, error: 'Name already exists' };
+  const p = { name, ...NEW_PROFILE_DEFAULTS, ...profile };
+  await saveCustom([...ps, p]);
+  return { ok: true, profile: p };
+}
+
+async function updateProfile(name, patch) {
+  if (BUILTINS.some(b => b.name === name)) return { ok: false, error: 'Built-in profiles are read-only' };
+  const ps  = await loadCustom();
+  const idx = ps.findIndex(p => p.name === name);
+  if (idx < 0) return { ok: false, error: 'Not found' };
+  const updated = { ...ps[idx], ...patch };
+  await saveCustom(ps.with(idx, updated));
+  if ((await loadActive()) === name) await apply(name).catch(() => {});
+  return { ok: true, profile: updated };
+}
+
+async function deleteProfile(name) {
+  if (BUILTINS.some(b => b.name === name)) return { ok: false, error: 'Built-in profiles are read-only' };
+  const ps   = await loadCustom();
+  const next = ps.filter(p => p.name !== name);
+  if (next.length === ps.length) return { ok: false, error: 'Not found' };
+  await saveCustom(next);
+  if ((await loadActive()) === name) { await set(KEY_ACTIVE, 'system'); await apply('system').catch(() => {}); }
+  return { ok: true };
+}
+
+async function previewPac(name) {
+  const p = await findProfile(name);
+  if (!p) return { ok: false, error: 'Not found' };
+  if (p.type !== 'switch') return { ok: false, error: 'Only switch profiles generate PAC' };
+  return { ok: true, data: await buildPAC(p) };
+}
+
+// Throws instead of returning {ok:false} — the expose() bus surfaces thrown
+// errors to callers, unlike the message handlers below which need a result object.
+const orThrow = res => { if (!res.ok) throw new Error(res.error); return res; };
+
 export async function init() {
   register('proxy', paletteItems);
   try { await apply(await loadActive()); } catch (e) { console.warn('[Proxy] init:', e); }
 
   expose('proxy', {
-    list:    () => allProfiles(),
-    active:  async () => { const name = await loadActive(); return { name, profile: await findProfile(name) }; },
-    switch:  (name) => apply(name),
-    create:  async (name, profile) => {
-      const ps = await loadCustom();
-      if (BUILTINS.some(b => b.name === name) || ps.some(p => p.name === name))
-        throw new Error('Name already exists');
-      const p = { name, color: '#99ccee', type: 'fixed', protocol: 'http', host: '', port: 8080,
-        bypass: ['localhost', '127.0.0.1'], ...profile };
-      ps.push(p); await saveCustom(ps); return p;
-    },
-    update:  async (name, patch) => {
-      if (BUILTINS.some(b => b.name === name)) throw new Error('Built-in profiles are read-only');
-      const ps  = await loadCustom();
-      const idx = ps.findIndex(p => p.name === name);
-      if (idx < 0) throw new Error('Not found');
-      ps[idx] = { ...ps[idx], ...patch };
-      await saveCustom(ps);
-      if ((await loadActive()) === name) await apply(name).catch(() => {});
-      return ps[idx];
-    },
-    delete:  async (name) => {
-      if (BUILTINS.some(b => b.name === name)) throw new Error('Built-in profiles are read-only');
-      const ps   = await loadCustom();
-      const next = ps.filter(p => p.name !== name);
-      if (next.length === ps.length) throw new Error('Not found');
-      await saveCustom(next);
-      if ((await loadActive()) === name) { await set(KEY_ACTIVE, 'system'); await apply('system').catch(() => {}); }
-    },
-    previewPac: async (name) => {
-      const p = await findProfile(name);
-      if (!p) throw new Error('Not found');
-      if (p.type !== 'switch') throw new Error('Only switch profiles generate PAC');
-      return buildPAC(p);
-    },
+    list: () => allProfiles(),
+    active: async () => { const name = await loadActive(); return { name, profile: await findProfile(name) }; },
+    switch: (name) => apply(name),
+    create: async (name, profile) => orThrow(await createProfile(name, profile)).profile,
+    update: async (name, patch) => orThrow(await updateProfile(name, patch)).profile,
+    delete: async (name) => orThrow(await deleteProfile(name)),
+    previewPac: async (name) => orThrow(await previewPac(name)).data,
   });
 }
 
@@ -146,41 +160,12 @@ export function handleProxyAction(type) {
 }
 
 export const handlers = {
-  'proxy:list':   async ()    => ({ ok: true, profiles: await allProfiles() }),
-  'proxy:active': async ()    => { const name = await loadActive(); return { ok: true, name, profile: await findProfile(name) }; },
-  'proxy:switch': async msg   => { await apply(msg.name); return { ok: true, active: msg.name }; },
-  'proxy:create': async msg   => {
-    const ps = await loadCustom();
-    if (BUILTINS.some(b => b.name === msg.name) || ps.some(p => p.name === msg.name))
-      return { ok: false, error: 'Name already exists' };
-    const p = { name: msg.name, color: '#99ccee', type: 'fixed', protocol: 'http', host: '', port: 8080,
-      bypass: ['localhost', '127.0.0.1'], ...msg.profile };
-    ps.push(p); await saveCustom(ps); return { ok: true, profile: p };
-  },
-  'proxy:update': async msg   => {
-    if (BUILTINS.some(b => b.name === msg.name)) return { ok: false, error: 'Built-in profiles are read-only' };
-    const ps  = await loadCustom();
-    const idx = ps.findIndex(p => p.name === msg.name);
-    if (idx < 0) return { ok: false, error: 'Not found' };
-    ps[idx] = { ...ps[idx], ...msg.patch };
-    await saveCustom(ps);
-    if ((await loadActive()) === msg.name) await apply(msg.name).catch(() => {});
-    return { ok: true, profile: ps[idx] };
-  },
-  'proxy:delete': async msg   => {
-    if (BUILTINS.some(b => b.name === msg.name)) return { ok: false, error: 'Built-in profiles are read-only' };
-    const ps   = await loadCustom();
-    const next = ps.filter(p => p.name !== msg.name);
-    if (next.length === ps.length) return { ok: false, error: 'Not found' };
-    await saveCustom(next);
-    if ((await loadActive()) === msg.name) { await set(KEY_ACTIVE, 'system'); await apply('system').catch(() => {}); }
-    return { ok: true };
-  },
-  'proxy:preview-pac': async msg => {
-    const p = await findProfile(msg.name);
-    if (!p) return { ok: false, error: 'Not found' };
-    if (p.type !== 'switch') return { ok: false, error: 'Only switch profiles generate PAC' };
-    return { ok: true, data: await buildPAC(p) };
-  },
+  'proxy:list': async () => ({ ok: true, profiles: await allProfiles() }),
+  'proxy:active': async () => { const name = await loadActive(); return { ok: true, name, profile: await findProfile(name) }; },
+  'proxy:switch': async msg => { await apply(msg.name); return { ok: true, active: msg.name }; },
+  'proxy:create': async msg => createProfile(msg.name, msg.profile),
+  'proxy:update': async msg => updateProfile(msg.name, msg.patch),
+  'proxy:delete': async msg => deleteProfile(msg.name),
+  'proxy:preview-pac': async msg => previewPac(msg.name),
   'proxy:open-options': async () => { chrome.tabs.create({ url: chrome.runtime.getURL('pages/options.html#proxy') }); return { ok: true }; },
 };

@@ -158,8 +158,26 @@ async function createTicker() {
   } catch { /* Already exists */ }
 }
 
+// A set needs active per-second timing only if it has a time limit or a
+// block/refer rule configured; sets that are disabled or empty don't need
+// the ticker running at all. This lets the offscreen ticker stay fully idle
+// (no setInterval, no SW wake-ups) for users who haven't configured Focus
+// Guard, which used to burn CPU unconditionally every second.
+function anySetNeedsTicking() {
+  for (let set = 1; set <= gNumSets; set++) {
+    if (gOptions[`disable${set}`]) continue;
+    if (+gOptions[`limitMins${set}`] > 0) return true;
+    if (gRegExps[set]?.block || gRegExps[set]?.refer) return true;
+  }
+  return false;
+}
+
 function refreshTicker() {
-  chrome.runtime.sendMessage({ type: 'fg:ticker-config', tickerSecs: +gOptions['processTabsSecs'] }).catch(() => {});
+  chrome.runtime.sendMessage({
+    type: 'fg:ticker-config',
+    tickerSecs: +gOptions['processTabsSecs'] || 1,
+    active: anySetNeedsTicking(),
+  }).catch(() => {});
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────
@@ -413,10 +431,10 @@ function updateTimer(tabId) {
 }
 
 // ── Site add ──────────────────────────────────────────────────────────────────
-async function addSitesToSet(sites, set) {
+async function addSitesToSet(sites, set, replace = false) {
   if (!set || set < 1 || set > gNumSets) return;
   const key     = `sites${set}`;
-  const merged  = cleanSites(((gOptions[key] || '') + ' ' + sites).trim());
+  const merged  = replace ? cleanSites(sites) : cleanSites(((gOptions[key] || '') + ' ' + sites).trim());
   const regexps = getRegExpSites(merged, gOptions['matchSubdomains']);
   Object.assign(gOptions, {
     [key]:                   merged,
@@ -571,8 +589,6 @@ export async function init() {
   chrome.webNavigation.onBeforeNavigate.addListener(handleBeforeNavigate);
   if (chrome.contextMenus) chrome.contextMenus.onClicked.addListener(handleMenuClick);
 
-  chrome.alarms.create('fg-keepalive', { periodInMinutes: 0.5 });
-
   register('focus-guard', async (q) => {
     const match = t => !q || t.toLowerCase().includes(q.toLowerCase());
     const blCount = await blGetRuleCount();
@@ -635,6 +651,41 @@ export const handlers = {
   'fg:restart':         async (msg)       => restartTimeData(msg.set),
   'fg:discard-time':    async ()          => discardRemainingTime(),
   'fg:open-lockdown':   async ()          => openLockdown(),
+
+  // Read-only summary for the options page (the panel previously called
+  // fg:get / fg:enable / fg:disable / fg:remove-set / fg:add-set, none of
+  // which exist — Focus Guard's real state lives in numbered per-set keys
+  // like disable{N}/setName{N}/sites{N}, not a `sets` array). This handler
+  // exposes that real shape instead.
+  'fg:summary': async () => ({
+    ok: true,
+    numSets: gNumSets,
+    sets: Array.from({ length: gNumSets }, (_, i) => {
+      const set = i + 1;
+      return {
+        set,
+        name: gOptions[`setName${set}`] || `Set ${set}`,
+        disabled: !!gOptions[`disable${set}`],
+        sites: gOptions[`sites${set}`] || '',
+        limitMins: gOptions[`limitMins${set}`] || '',
+      };
+    }),
+  }),
+  'fg:set-disabled': async (msg) => {
+    const set = +msg.set;
+    if (!set || set < 1 || set > gNumSets) return { ok: false };
+    gOptions[`disable${set}`] = !!msg.disabled;
+    await chrome.storage.local.set({ [`disable${set}`]: !!msg.disabled });
+    createRegExps();
+    refreshTicker();
+    return { ok: true };
+  },
+  'fg:set-sites': async (msg) => {
+    const set = +msg.set;
+    if (!set || set < 1 || set > gNumSets) return { ok: false };
+    await addSitesToSet(msg.sites, set, /* replace */ true);
+    return { ok: true };
+  },
 
   'fg:password': async (msg, sender) => {
     if (!sender?.tab?.id) return { ok: false };
