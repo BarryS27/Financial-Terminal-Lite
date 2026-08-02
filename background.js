@@ -1,4 +1,16 @@
-// background.js — Captain unified service worker v5
+// background.js — Captain unified service worker v6
+// Changes from v5:
+//   • Added cookies and screen-lock providers (feature parity with the
+//     standalone cookie-editor / chrome-lockdown extensions, reimplemented
+//     natively against Captain's provider architecture)
+//   • TOTP is merged into Vault: a 2FA secret is stored as a protected
+//     `otp` field on a vault entry (the KeePass/Bitwarden convention)
+//     instead of a separate plaintext chrome.storage.local account list —
+//     one encrypted store, unlocked/locked together, instead of two
+//   • Focus Guard ticker is now demand-driven instead of running a 1s
+//     setInterval unconditionally forever (see ticker.js) — this was the
+//     dominant idle CPU/fan-noise source
+//   • Removed the dead `fg-keepalive` alarm (created, never listened to)
 // Changes from v4:
 //   • Annotate provider removed
 //   • Blacklist merged into focus-guard
@@ -6,17 +18,21 @@
 //   • guard.js and overlay.js injected lazily via scripting API (not in manifest content_scripts)
 
 import { init as initBrowser,   handlers as browserHandlers   } from './providers/browser.js';
-import { init as initWebRTC,    handlers as webrtcHandlers    } from './providers/webrtc.js';
+import { init as initWebRTC,    handlers as webrtcHandlers,
+         handleWebrtcAction                                    } from './providers/webrtc.js';
 import { init as initUA,        handlers as uaHandlers        } from './providers/ua.js';
 import { init as initFG,        handlers as fgHandlers        } from './providers/focus-guard.js';
 import { init as initProxy,     handlers as proxyHandlers,
          handleProxyAction                                     } from './providers/proxy.js';
-import { init as initVault,     handlers as vaultHandlers     } from './providers/vault.js';
+import { init as initVault,     handlers as vaultHandlers,
+         handleVaultAction                                     } from './providers/vault.js';
 import { init as initDiscard,   handlers as discardHandlers   } from './providers/tab-discard.js';
 import { init as initWorkspace, handlers as workspaceHandlers,
          handleWorkspaceAction                                 } from './providers/workspace.js';
 import { init as initAI,        handlers as aiHandlers,
          streamChat                                            } from './providers/ai.js';
+import { init as initCookies,   handlers as cookiesHandlers   } from './providers/cookies.js';
+import { init as initScreenLock, handlers as screenLockHandlers } from './providers/screen-lock.js';
 import { get, set }  from './core/storage.js';
 import { recordUse } from './core/usage.js';
 
@@ -87,6 +103,8 @@ async function injectContentScripts(tabId, frameId = 0) {
     initDiscard(),
     initWorkspace(),
     initAI(),
+    initCookies(),
+    initScreenLock(),
   ]);
 
   const allHandlers = {
@@ -99,6 +117,8 @@ async function injectContentScripts(tabId, frameId = 0) {
     ...discardHandlers,
     ...workspaceHandlers,
     ...aiHandlers,
+    ...cookiesHandlers,
+    ...screenLockHandlers,
   };
 
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
@@ -107,7 +127,8 @@ async function injectContentScripts(tabId, frameId = 0) {
     const dynamicHandler =
       handleProxyAction(msg.type) ??
       handleWorkspaceAction(msg.type) ??
-      handleVaultFill(msg.type);
+      handleVaultAction(msg.type) ??
+      handleWebrtcAction(msg.type);
 
     const handler = dynamicHandler ?? allHandlers[msg.type];
     if (!handler) return;
@@ -174,9 +195,3 @@ async function injectContentScripts(tabId, frameId = 0) {
     await browserHandlers['browser:open-captain']?.();
   });
 })();
-
-function handleVaultFill(type) {
-  if (!type?.startsWith('vault:fill:')) return null;
-  const uuid = type.slice('vault:fill:'.length);
-  return () => vaultHandlers['vault:fill']({ uuid });
-}
