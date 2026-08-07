@@ -79,19 +79,19 @@ body { display: block; }
 .ua-remove { opacity: 0.5; flex-shrink: 0; font-size: 11px; }
 .ua-chip:hover .ua-remove { opacity: 1; }
 
-/* Web Time mini list */
-.wt-bar-row {
+/* Site Usage (inside the Focus Guard panel) — deliberately flat: no
+   colour, no bars, no per-row emphasis. The single weekly total is the
+   only number in this block allowed any visual weight. */
+.wt-usage-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 16px;
+  padding: 7px 16px;
   border-bottom: 1px solid var(--color-border);
 }
-.wt-bar-row:last-child { border-bottom: none; }
-.wt-bar-domain { flex: 0 0 150px; font-size: var(--text-xs); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wt-bar-track { flex: 1; height: 6px; border-radius: var(--radius-pill); background: var(--color-border); overflow: hidden; }
-.wt-bar-fill { height: 100%; background: var(--color-accent); border-radius: var(--radius-pill); transition: width var(--dur-normal) var(--ease-out); }
-.wt-bar-time { flex: 0 0 48px; text-align: right; font-size: var(--text-xs); color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.wt-usage-row:last-child { border-bottom: none; }
+.wt-usage-domain { flex: 1; min-width: 0; font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-usage-time { flex: 0 0 auto; font-size: var(--text-xs); color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -142,7 +142,6 @@ body { display: block; }
       <div class="nav-section-label">Focus</div>
       <button class="nav-item" data-panel="focus-guard"><span class="nav-icon">⊘</span>Focus</button>
       <button class="nav-item" data-panel="tab-discard"><span class="nav-icon">◌</span>Tab Sleep</button>
-      <button class="nav-item" data-panel="webtime"><span class="nav-icon">◷</span>Web Time</button>
 
       <div class="nav-section-label">Tools</div>
       <button class="nav-item" data-panel="ai"><span class="nav-icon">◆</span>AI</button>
@@ -360,6 +359,25 @@ body { display: block; }
         </div>
 
       <hr style="margin:24px 0;border:none;border-top:1px solid var(--color-border)">
+      <h2 style="margin-bottom:4px">Site Usage</h2>
+      <p class="panel-desc">Background signal to help decide what's worth blocking above — off by default, nothing is shown anywhere else, and rows roll off after 14 days.</p>
+      <div class="field-group" style="margin-bottom:12px">
+        <div class="field">
+          <div class="field-label"><strong>Track time per site</strong><span>Only while a tab is active, focused, and you're not idle</span></div>
+          <div class="field-control"><label class="toggle"><input type="checkbox" id="wt-enabled"><span class="toggle-track"></span></label></div>
+        </div>
+      </div>
+      <div id="wt-usage"></div>
+      <div class="textarea-field" id="wt-ignore-wrap" style="margin-top:10px">
+        <textarea id="wt-ignore" rows="2" placeholder="Never record: mail.google.com, *.bank.com"></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-outline btn-sm" id="wt-save">Save</button>
+        <button class="btn btn-outline btn-sm" id="wt-clear" style="margin-left:auto">Clear usage data</button>
+      </div>
+      <div class="status-bar" id="wt-status"></div>
+
+      <hr style="margin:24px 0;border:none;border-top:1px solid var(--color-border)">
       <h2 style="margin-bottom:8px">Search Filter</h2>
       <p class="panel-desc">Automatically hide domains from Google search results. One rule per line: <code>domain.com</code>, <code>*.wildcard.com</code>, or <code>/regex/i</code>.</p>
       <div class="field-group">
@@ -410,59 +428,6 @@ body { display: block; }
         <button class="btn btn-outline" id="td-sleep-now">Sleep inactive tabs now</button>
       </div>
       <div class="status-bar" id="td-status"></div>
-    </section>
-
-    <!-- Web Time -->
-    <section class="panel" id="panel-webtime">
-      <div class="panel-head"><h1>Web Time</h1></div>
-      <p class="panel-desc">Captain quietly times how long you spend on each site — only while the tab is active, focused, and you're not idle. Everything stays local to this device.</p>
-
-      <div class="field-group">
-        <div class="field">
-          <div class="field-label"><strong>Track time</strong><span>Measure active browsing time per domain</span></div>
-          <div class="field-control"><label class="toggle"><input type="checkbox" id="wt-enabled"><span class="toggle-track"></span></label></div>
-        </div>
-        <div class="field">
-          <div class="field-label"><strong>Show time on toolbar icon</strong><span>Today's time for the active site, on Captain's icon</span></div>
-          <div class="field-control"><label class="toggle"><input type="checkbox" id="wt-badge"><span class="toggle-track"></span></label></div>
-        </div>
-        <div class="field">
-          <div class="field-label"><strong>Keep timing while media plays</strong><span>Don't pause on an idle tab that's playing audio/video</span></div>
-          <div class="field-control"><label class="toggle"><input type="checkbox" id="wt-media"><span class="toggle-track"></span></label></div>
-        </div>
-        <div class="field">
-          <div class="field-label"><strong>Consider idle after</strong><span>Pause tracking once there's no input for this long</span></div>
-          <div class="field-control">
-            <select id="wt-idle" style="font-size:var(--text-xs)">
-              <option value="30">30 sec</option>
-              <option value="60">1 min</option>
-              <option value="120">2 min</option>
-              <option value="300">5 min</option>
-              <option value="600">10 min</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <h3>Today so far</h3>
-      <div class="field-group">
-        <div class="field">
-          <div class="field-label"><strong id="wt-today-total">—</strong><span>Total active time today</span></div>
-          <div class="field-control"><button class="btn btn-outline btn-sm" id="wt-open-report">Open report →</button></div>
-        </div>
-      </div>
-      <div id="wt-today-list"></div>
-
-      <h3>Never track these sites</h3>
-      <div class="textarea-field">
-        <textarea id="wt-ignore" rows="3" placeholder="mail.google.com&#10;*.bank.com"></textarea>
-      </div>
-
-      <div class="btn-row">
-        <button class="btn btn-primary" id="wt-save">Save</button>
-        <button class="btn btn-danger btn-sm" id="wt-clear-today" style="margin-left:auto">Clear today</button>
-      </div>
-      <div class="status-bar" id="wt-status"></div>
     </section>
 
     <!-- AI -->

@@ -257,53 +257,72 @@ document.getElementById('td-sleep-now').addEventListener('click', async () => {
 });
 loadTabDiscard();
 
-// ── Web Time ──────────────────────────────────────────────────────────────────
-async function loadWebtime() {
-  const res = await chrome.runtime.sendMessage({ type: 'webtime:get-summary' });
+// ── Site Usage (lives inside the Focus Guard panel, not its own panel) ─────────
+// Purely a background signal for deciding what to add to a block set above —
+// see providers/webtime.js. Off by default; rendering is intentionally flat
+// (no colour, no bars) except for the single weekly total.
+async function loadWebtimeUsage() {
+  const res = await chrome.runtime.sendMessage({ type: 'webtime:get-usage' }).catch(() => null);
   if (!res?.ok) return;
   document.getElementById('wt-enabled').checked = res.prefs.enabled;
-  document.getElementById('wt-badge').checked   = res.prefs.badgeDisplay;
-  document.getElementById('wt-media').checked   = res.prefs.trackOnMedia;
-  document.getElementById('wt-idle').value      = String(res.prefs.idleSeconds);
   document.getElementById('wt-ignore').value    = (res.prefs.ignoreList || []).join('\n');
-  document.getElementById('wt-today-total').textContent =
-    res.totals.todaySeconds > 0 ? formatDuration(res.totals.todaySeconds) : 'Nothing tracked yet';
 
-  const list = document.getElementById('wt-today-list');
-  const top  = res.today.slice(0, 6);
-  const max  = top[0]?.seconds || 1;
-  list.innerHTML = top.length
-    ? `<div class="field-group">${top.map(d => `
-        <div class="wt-bar-row">
-          <div class="wt-bar-domain">${esc(d.domain)}</div>
-          <div class="wt-bar-track"><div class="wt-bar-fill" style="width:${Math.max(4, d.seconds / max * 100)}%"></div></div>
-          <div class="wt-bar-time">${formatDuration(d.seconds)}</div>
-        </div>`).join('')}</div>`
-    : '<p class="panel-desc" style="margin-top:-8px">No browsing time tracked yet today.</p>';
+  const box = document.getElementById('wt-usage');
+  if (!res.prefs.enabled) {
+    box.innerHTML = '<p class="panel-desc" style="margin:0">Turn this on to see which sites take up your time.</p>';
+    return;
+  }
+  if (!res.top.length) {
+    box.innerHTML = '<p class="panel-desc" style="margin:0">No usage recorded yet — check back in a day or two.</p>';
+    return;
+  }
+  const rows = res.top.map(d => `
+    <div class="wt-usage-row">
+      <div class="wt-usage-domain">${esc(d.domain)}</div>
+      <div class="wt-usage-time">${formatDuration(d.seconds)}</div>
+      <button class="btn btn-outline btn-sm" data-role="wt-add" data-domain="${esc(d.domain)}">+ Block</button>
+    </div>`).join('');
+  box.innerHTML = `
+    <p class="panel-desc" style="margin:0 0 8px"><strong style="color:var(--color-text)">${esc(formatDuration(res.weekSeconds))}</strong> across ${res.siteCount} site${res.siteCount === 1 ? '' : 's'} this week</p>
+    <div class="field-group" style="margin-bottom:0">${rows}</div>`;
+  box.querySelectorAll('[data-role="wt-add"]').forEach(btn => {
+    btn.addEventListener('click', () => addSiteToFocusGuard(btn.dataset.domain));
+  });
 }
 
+async function addSiteToFocusGuard(domain) {
+  const fg = await chrome.runtime.sendMessage({ type: 'fg:summary' }).catch(() => null);
+  if (!fg?.ok || !fg.sets.length) { setStatus('wt-status', 'Add a block set above first.', true); return; }
+  let targetSet = fg.sets[0].set;
+  if (fg.sets.length > 1) {
+    const menu   = fg.sets.map(s => `${s.set}: ${s.name}`).join('\n');
+    const answer = prompt(`Add ${domain} to which set?\n${menu}`, String(targetSet));
+    if (answer == null) return;
+    const chosen = parseInt(answer);
+    if (!fg.sets.some(s => s.set === chosen)) { setStatus('wt-status', 'Invalid set.', true); return; }
+    targetSet = chosen;
+  }
+  await chrome.runtime.sendMessage({ type: 'fg:add-sites', sites: domain, set: targetSet });
+  setStatus('wt-status', `Added ${domain} to set ${targetSet}. ✓`);
+  loadFocusGuard();
+}
+
+document.getElementById('wt-enabled').addEventListener('change', async function () {
+  await chrome.runtime.sendMessage({ type: 'webtime:set-prefs', patch: { enabled: this.checked } });
+  loadWebtimeUsage();
+});
 document.getElementById('wt-save').addEventListener('click', async () => {
-  const patch = {
-    enabled:      document.getElementById('wt-enabled').checked,
-    badgeDisplay: document.getElementById('wt-badge').checked,
-    trackOnMedia: document.getElementById('wt-media').checked,
-    idleSeconds:  parseInt(document.getElementById('wt-idle').value) || 60,
-    ignoreList:   document.getElementById('wt-ignore').value.split('\n').map(s => s.trim()).filter(Boolean),
-  };
-  const res = await chrome.runtime.sendMessage({ type: 'webtime:set-prefs', patch });
+  const ignoreList = document.getElementById('wt-ignore').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const res = await chrome.runtime.sendMessage({ type: 'webtime:set-prefs', patch: { ignoreList } });
   setStatus('wt-status', res?.ok ? 'Saved. ✓' : 'Error.', !res?.ok);
-  loadWebtime();
 });
-document.getElementById('wt-clear-today').addEventListener('click', async () => {
-  if (!confirm("Clear today's Web Time data?")) return;
-  await chrome.runtime.sendMessage({ type: 'webtime:clear-data', scope: 'today' });
+document.getElementById('wt-clear').addEventListener('click', async () => {
+  if (!confirm('Clear all recorded site usage data?')) return;
+  await chrome.runtime.sendMessage({ type: 'webtime:clear-data' });
   setStatus('wt-status', 'Cleared. ✓');
-  loadWebtime();
+  loadWebtimeUsage();
 });
-document.getElementById('wt-open-report').addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'webtime:open' });
-});
-loadWebtime();
+loadWebtimeUsage();
 
 // ── Workspaces ────────────────────────────────────────────────────────────────
 async function loadWorkspaces() {
