@@ -15,3 +15,4 @@ Overall, this is a chrome extension that has the ability of these (and inspired 
 - Page Assist
 - Cookie Editor
 - Chrome Lockdown
+- Webtime Tracker
