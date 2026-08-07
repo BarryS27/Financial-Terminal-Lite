@@ -35,6 +35,16 @@ export function toast(message, { color = '#22c55e' } = {}) {
   setTimeout(() => el.remove(), 1700);
 }
 
+// Human-readable duration, e.g. 4210 -> "1h 10m", 90 -> "1m", 40 -> "40s".
+export function formatDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+
 export function copyText(text, message = 'Copied!') {
   navigator.clipboard.writeText(text).catch(() => {
     const ta = document.createElement('textarea');

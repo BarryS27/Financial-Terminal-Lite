@@ -33,6 +33,7 @@ import { init as initAI,        handlers as aiHandlers,
          streamChat                                            } from './providers/ai.js';
 import { init as initCookies,   handlers as cookiesHandlers   } from './providers/cookies.js';
 import { init as initScreenLock, handlers as screenLockHandlers } from './providers/screen-lock.js';
+import { init as initWebtime,   handlers as webtimeHandlers   } from './providers/webtime.js';
 import { get, set }  from './core/storage.js';
 import { recordUse } from './core/usage.js';
 
@@ -105,6 +106,7 @@ async function injectContentScripts(tabId, frameId = 0) {
     initAI(),
     initCookies(),
     initScreenLock(),
+    initWebtime(),
   ]);
 
   const allHandlers = {
@@ -119,6 +121,7 @@ async function injectContentScripts(tabId, frameId = 0) {
     ...aiHandlers,
     ...cookiesHandlers,
     ...screenLockHandlers,
+    ...webtimeHandlers,
   };
 
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {

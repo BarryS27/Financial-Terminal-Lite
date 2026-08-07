@@ -1,7 +1,7 @@
 'use strict';
 // Captain Options — ACDN design
 
-import { esc } from './shared.js';
+import { esc, formatDuration } from './shared.js';
 
 // ── Nav ───────────────────────────────────────────────────────────────────────
 const hash = location.hash.replace('#', '');
@@ -256,6 +256,54 @@ document.getElementById('td-sleep-now').addEventListener('click', async () => {
   setStatus('td-status', 'Sleeping inactive tabs…');
 });
 loadTabDiscard();
+
+// ── Web Time ──────────────────────────────────────────────────────────────────
+async function loadWebtime() {
+  const res = await chrome.runtime.sendMessage({ type: 'webtime:get-summary' });
+  if (!res?.ok) return;
+  document.getElementById('wt-enabled').checked = res.prefs.enabled;
+  document.getElementById('wt-badge').checked   = res.prefs.badgeDisplay;
+  document.getElementById('wt-media').checked   = res.prefs.trackOnMedia;
+  document.getElementById('wt-idle').value      = String(res.prefs.idleSeconds);
+  document.getElementById('wt-ignore').value    = (res.prefs.ignoreList || []).join('\n');
+  document.getElementById('wt-today-total').textContent =
+    res.totals.todaySeconds > 0 ? formatDuration(res.totals.todaySeconds) : 'Nothing tracked yet';
+
+  const list = document.getElementById('wt-today-list');
+  const top  = res.today.slice(0, 6);
+  const max  = top[0]?.seconds || 1;
+  list.innerHTML = top.length
+    ? `<div class="field-group">${top.map(d => `
+        <div class="wt-bar-row">
+          <div class="wt-bar-domain">${esc(d.domain)}</div>
+          <div class="wt-bar-track"><div class="wt-bar-fill" style="width:${Math.max(4, d.seconds / max * 100)}%"></div></div>
+          <div class="wt-bar-time">${formatDuration(d.seconds)}</div>
+        </div>`).join('')}</div>`
+    : '<p class="panel-desc" style="margin-top:-8px">No browsing time tracked yet today.</p>';
+}
+
+document.getElementById('wt-save').addEventListener('click', async () => {
+  const patch = {
+    enabled:      document.getElementById('wt-enabled').checked,
+    badgeDisplay: document.getElementById('wt-badge').checked,
+    trackOnMedia: document.getElementById('wt-media').checked,
+    idleSeconds:  parseInt(document.getElementById('wt-idle').value) || 60,
+    ignoreList:   document.getElementById('wt-ignore').value.split('\n').map(s => s.trim()).filter(Boolean),
+  };
+  const res = await chrome.runtime.sendMessage({ type: 'webtime:set-prefs', patch });
+  setStatus('wt-status', res?.ok ? 'Saved. ✓' : 'Error.', !res?.ok);
+  loadWebtime();
+});
+document.getElementById('wt-clear-today').addEventListener('click', async () => {
+  if (!confirm("Clear today's Web Time data?")) return;
+  await chrome.runtime.sendMessage({ type: 'webtime:clear-data', scope: 'today' });
+  setStatus('wt-status', 'Cleared. ✓');
+  loadWebtime();
+});
+document.getElementById('wt-open-report').addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'webtime:open' });
+});
+loadWebtime();
 
 // ── Workspaces ────────────────────────────────────────────────────────────────
 async function loadWorkspaces() {
