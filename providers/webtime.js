@@ -1,34 +1,37 @@
-// providers/webtime.js — Web Time tracker integrated into Captain
-// Core idea reimplemented from the standalone "Webtime Tracker" extension,
-// against Captain's own provider architecture:
-//   • Times only the active tab in the focused window, while the system is
-//     not idle/locked (mirrors Focus Guard's "don't fake it" philosophy).
-//   • Event-driven, not a 1s setInterval — see background.js's note on why
-//     the old FG ticker was the dominant idle CPU/fan-noise source. A short
-//     alarm (30s) is only a safety net for a tab that just sits there with
-//     no browser events firing.
-//   • All data stays local (chrome.storage.local) — nothing phones home,
-//     and per-site favicons are never fetched from a third party (Captain
-//     is a privacy tool; a coloured initial dot is used in the UI instead).
+// providers/webtime.js — Site usage signal for Focus Guard
+//
+// This is NOT a standalone time-tracking product. Captain's own lineage
+// (LeechBlock, uBlacklist, WebRTC Control, Cookie Editor…) is about
+// reducing tracking and enforcing control, not building a self-quantifying
+// dashboard of your own behaviour. So this provider does one narrow job:
+// quietly note how long you spend per domain over the last week, purely so
+// the Focus Guard panel can show "here's what's actually eating your time"
+// next to the block-set editor. There is no separate page, no charts, no
+// toolbar badge, and no palette command — it only surfaces inside Focus
+// Guard's own settings, off by default, and rows older than 14 days are
+// dropped automatically rather than kept forever.
+//
+// Timing approach mirrors Tab Sleep / Focus Guard's own philosophy: only
+// the active tab, in the focused window, while the system isn't idle —
+// driven by tab/window/idle events, with a 30s alarm as a safety net for a
+// tab that just sits there with no browser events firing (see background.js
+// for why an unconditional interval is the wrong call here).
 
-import { register }        from '../core/registry.js';
-import { get, set }        from '../core/storage.js';
-import { expose }          from '../core/bus.js';
+import { get, set } from '../core/storage.js';
 
 const PREFS_KEY      = 'c.webtime.prefs';
-const DOMAINS_KEY     = 'c.webtime.domains';
-const META_KEY        = 'c.webtime.meta';
-const CHECKPOINT_KEY  = 'c.webtime.checkpoint';
+const DOMAINS_KEY    = 'c.webtime.domains';
+const CHECKPOINT_KEY = 'c.webtime.checkpoint';
 
 const ALARM_TICK = 'c-webtime-tick';
 const ALARM_SAVE = 'c-webtime-save';
 
+const RETENTION_DAYS = 14;
+const IDLE_SECONDS   = 60;
+
 const DEFAULT_PREFS = {
-  enabled:      true,
-  badgeDisplay: false,   // off by default — keeps Captain's icon clean unless opted in
-  trackOnMedia: false,   // keep timing a tab that's playing audio/video while idle
-  idleSeconds:  60,      // consider the system idle after this many seconds
-  ignoreList:   [],       // hostnames / *.wildcard / /regex/ never tracked
+  enabled:    false,  // opt-in — Captain never starts logging your browsing on its own
+  ignoreList: [],      // hostnames / *.wildcard / /regex/ never recorded
 };
 
 const UNTRACKABLE_PROTOCOLS = new Set([
@@ -36,19 +39,15 @@ const UNTRACKABLE_PROTOCOLS = new Set([
 ]);
 
 let _prefs   = { ...DEFAULT_PREFS };
-let _domains = {};
-let _meta    = { dateStart: null };
+let _domains = {};        // { host: { days: { 'YYYY-MM-DD': seconds } } }
 
-let _trackedTab    = null;  // { id, url } | null
+let _trackedTab     = null;  // { id, url } | null
 let _lastCheckpoint = Date.now();
-let _dirty          = false;
+let _dirty           = false;
 
 // ── Small local helpers ─────────────────────────────────────────────────────
 const hostnameOf = (url) => { try { return new URL(url).hostname; } catch { return ''; } };
-
-// Locale-independent YYYY-MM-DD, same trick used elsewhere in the codebase
-// for date bucket keys.
-const dayKey = (ts = Date.now()) => new Date(ts).toLocaleDateString('sv');
+const dayKey = (ts = Date.now()) => new Date(ts).toLocaleDateString('sv'); // YYYY-MM-DD
 
 function lastNDays(n, from = Date.now()) {
   const out = [];
@@ -57,7 +56,7 @@ function lastNDays(n, from = Date.now()) {
     d.setDate(d.getDate() - i);
     out.push(dayKey(d.getTime()));
   }
-  return out; // [today, today-1, ..., today-(n-1)]
+  return out;
 }
 
 function matchesIgnore(host, list) {
@@ -84,34 +83,35 @@ function isTrackable(url, ignoreList) {
   return true;
 }
 
-function badgeText(seconds) {
-  if (seconds < 60) return '';
-  const m = Math.floor(seconds / 60);
-  if (m < 60) return m + 'm';
-  return Math.floor(m / 60) + 'h';
+// Rows older than the retention window are dropped on every save — this is
+// a rolling week-scale signal for Focus Guard, not a permanent log.
+function pruneOldDays() {
+  const keep = new Set(lastNDays(RETENTION_DAYS));
+  for (const host of Object.keys(_domains)) {
+    const rec = _domains[host];
+    for (const day of Object.keys(rec.days)) {
+      if (!keep.has(day)) delete rec.days[day];
+    }
+    if (!Object.keys(rec.days).length) delete _domains[host];
+  }
 }
 
 // ── Persistence ─────────────────────────────────────────────────────────────
 async function loadState() {
   _prefs   = { ...DEFAULT_PREFS, ...(await get(PREFS_KEY) || {}) };
   _domains = (await get(DOMAINS_KEY)) || {};
-  _meta    = (await get(META_KEY)) || {};
-  if (!_meta.dateStart) { _meta.dateStart = dayKey(); await set(META_KEY, _meta); }
 
   const cp = await get(CHECKPOINT_KEY);
   if (cp?.tab?.id != null) {
-    // Only resume if the tab is still around — otherwise start fresh.
     const stillOpen = await chrome.tabs.get(cp.tab.id).then(() => true).catch(() => false);
-    if (stillOpen) {
-      _trackedTab      = cp.tab;
-      _lastCheckpoint  = cp.ts || Date.now();
-    }
+    if (stillOpen) { _trackedTab = cp.tab; _lastCheckpoint = cp.ts || Date.now(); }
   }
 }
 
 async function saveIfDirty() {
   if (!_dirty) return;
   _dirty = false;
+  pruneOldDays();
   await set(DOMAINS_KEY, _domains);
   await set(CHECKPOINT_KEY, { ts: _lastCheckpoint, tab: _trackedTab });
 }
@@ -120,35 +120,19 @@ async function saveIfDirty() {
 function attribute(seconds, url, now) {
   const host = hostnameOf(url);
   if (!host || seconds <= 0) return;
-  const day    = dayKey(now);
-  const rec    = _domains[host] ?? (_domains[host] = { alltime: { seconds: 0 }, days: {} });
-  const bucket = rec.days[day]  ?? (rec.days[day]  = { seconds: 0 });
-  rec.alltime.seconds += seconds;
-  bucket.seconds       += seconds;
+  const rec = _domains[host] ?? (_domains[host] = { days: {} });
+  const day = dayKey(now);
+  rec.days[day] = (rec.days[day] || 0) + seconds;
   _dirty = true;
 }
 
 async function queryIdleState() {
-  try { return await chrome.idle.queryState(_prefs.idleSeconds || 60); }
+  try { return await chrome.idle.queryState(IDLE_SECONDS); }
   catch { return 'active'; }
 }
 
-async function updateBadge(tabId, host) {
-  if (!_prefs.badgeDisplay || tabId == null) return;
-  try {
-    const secs = _domains[host]?.days?.[dayKey()]?.seconds || 0;
-    await chrome.action.setBadgeText({ tabId, text: badgeText(secs) });
-    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#3d7dd8' }).catch(() => {});
-  } catch { /* tab may already be gone */ }
-}
-
-// Simple promise-chain lock so overlapping browser events can't race each
-// other while reading/mutating the in-memory checkpoint.
 let _queue = Promise.resolve();
-function serialize(fn) {
-  _queue = _queue.then(fn, fn);
-  return _queue;
-}
+function serialize(fn) { _queue = _queue.then(fn, fn); return _queue; }
 
 async function doCycle() {
   if (!_prefs.enabled) {
@@ -158,14 +142,9 @@ async function doCycle() {
 
   const now = Date.now();
 
-  // Settle whatever time accrued on the previously tracked tab. Capped so a
-  // suspended/sleeping service worker never dumps a huge backlog onto one site.
   if (_trackedTab && _lastCheckpoint) {
     const elapsedSec = Math.min(Math.round((now - _lastCheckpoint) / 1000), 30);
-    if (elapsedSec > 0) {
-      attribute(elapsedSec, _trackedTab.url, now);
-      updateBadge(_trackedTab.id, hostnameOf(_trackedTab.url));
-    }
+    if (elapsedSec > 0) attribute(elapsedSec, _trackedTab.url, now);
   }
   _lastCheckpoint = now;
 
@@ -179,8 +158,7 @@ async function doCycle() {
   }
 
   const idleState = await queryIdleState();
-  if (idleState === 'locked') { if (_trackedTab) _dirty = true; _trackedTab = null; return; }
-  if (idleState === 'idle' && !(_prefs.trackOnMedia && activeTab.audible)) {
+  if (idleState !== 'active') {
     if (_trackedTab) _dirty = true;
     _trackedTab = null;
     return;
@@ -189,7 +167,6 @@ async function doCycle() {
   const changed = _trackedTab?.id !== activeTab.id || _trackedTab?.url !== activeTab.url;
   _trackedTab = { id: activeTab.id, url: activeTab.url };
   if (changed) _dirty = true;
-  updateBadge(activeTab.id, hostnameOf(activeTab.url));
 }
 
 async function setupAlarms() {
@@ -201,73 +178,31 @@ async function setupAlarms() {
   }
 }
 
-// ── Reporting ────────────────────────────────────────────────────────────────
-function computeSummary() {
-  const today = dayKey();
-  const days  = lastNDays(7);                 // [today, ..., today-6]
-  const chart = days.slice().reverse().map(d => ({ day: d, seconds: 0 })); // oldest → newest
-  const chartIndex = new Map(chart.map((c, i) => [c.day, i]));
-
-  let todaySeconds = 0, weekSeconds = 0, alltimeSeconds = 0;
-  const todayList = [], weekList = [];
-
+// ── Reporting (last 7 days only — this feeds a "what's worth blocking?"
+// decision, not a historical archive) ───────────────────────────────────────
+function computeUsage() {
+  const days = lastNDays(7);
+  let weekSeconds = 0;
+  const perDomain = [];
   for (const [host, rec] of Object.entries(_domains)) {
-    const tSec = rec.days[today]?.seconds || 0;
-    if (tSec > 0) todayList.push({ domain: host, seconds: tSec });
-    todaySeconds += tSec;
-
-    let wSec = 0;
-    for (const d of days) {
-      const s = rec.days[d]?.seconds || 0;
-      wSec += s;
-      if (chartIndex.has(d)) chart[chartIndex.get(d)].seconds += s;
-    }
-    if (wSec > 0) weekList.push({ domain: host, seconds: wSec });
-    weekSeconds += wSec;
-
-    alltimeSeconds += rec.alltime.seconds || 0;
+    let sec = 0;
+    for (const d of days) sec += rec.days[d] || 0;
+    if (sec > 0) perDomain.push({ domain: host, seconds: sec });
+    weekSeconds += sec;
   }
-
-  todayList.sort((a, b) => b.seconds - a.seconds);
-  weekList.sort((a, b) => b.seconds - a.seconds);
-  const topAlltime = Object.entries(_domains)
-    .map(([domain, rec]) => ({ domain, seconds: rec.alltime.seconds || 0 }))
-    .filter(d => d.seconds > 0)
-    .sort((a, b) => b.seconds - a.seconds)
-    .slice(0, 50);
-
-  return {
-    totals: { todaySeconds, weekSeconds, alltimeSeconds },
-    today:  todayList.slice(0, 50),
-    week:   weekList.slice(0, 50),
-    topAlltime,
-    chart,
-  };
+  perDomain.sort((a, b) => b.seconds - a.seconds);
+  return { weekSeconds, top: perDomain.slice(0, 8), siteCount: perDomain.length };
 }
 
 async function setPrefs(patch) {
   _prefs = { ..._prefs, ...patch };
   await set(PREFS_KEY, _prefs);
   await setupAlarms();
-  if (!_prefs.badgeDisplay) chrome.action.setBadgeText({ text: '' }).catch(() => {});
-  if (chrome.idle) chrome.idle.setDetectionInterval(_prefs.idleSeconds || 60);
   return _prefs;
 }
 
-async function clearData(scope) {
-  if (scope === 'all') {
-    _domains = {};
-  } else {
-    const today = dayKey();
-    for (const host of Object.keys(_domains)) {
-      const rec = _domains[host];
-      if (rec.days[today]) {
-        rec.alltime.seconds = Math.max(0, rec.alltime.seconds - rec.days[today].seconds);
-        delete rec.days[today];
-      }
-      if (!Object.keys(rec.days).length && rec.alltime.seconds <= 0) delete _domains[host];
-    }
-  }
+async function clearData() {
+  _domains = {};
   _dirty = true;
   await saveIfDirty();
 }
@@ -276,11 +211,11 @@ async function clearData(scope) {
 export async function init() {
   await loadState();
   await setupAlarms();
-  if (chrome.idle) chrome.idle.setDetectionInterval(_prefs.idleSeconds || 60);
+  if (chrome.idle) chrome.idle.setDetectionInterval(IDLE_SECONDS);
 
   chrome.tabs.onActivated.addListener(() => serialize(doCycle));
   chrome.tabs.onUpdated.addListener((_id, info) => {
-    if (info.status === 'complete' || info.url || info.audible !== undefined) serialize(doCycle);
+    if (info.status === 'complete' || info.url) serialize(doCycle);
   });
   chrome.tabs.onRemoved.addListener((tabId) => {
     if (_trackedTab?.id === tabId) { _trackedTab = null; _dirty = true; }
@@ -295,44 +230,14 @@ export async function init() {
   });
   chrome.runtime.onSuspend?.addListener(() => saveIfDirty());
 
-  register('webtime', async (q) => {
-    const match = t => !q || t.toLowerCase().includes(q.toLowerCase());
-    const items = [];
-    if (match('web time tracker screen time habits report')) {
-      const todaySec = computeSummary().totals.todaySeconds;
-      const desc = todaySec > 0
-        ? `${formatDurationShort(todaySec)} tracked today — view the report`
-        : 'See how long you spend on each site';
-      items.push({ id: 'webtime:open', title: 'Web Time: View report', desc, emoji: '⏱', type: 'action' });
-    }
-    return items;
-  });
-
-  expose('webtime', {
-    getSummary: () => computeSummary(),
-    getPrefs:   () => _prefs,
-    setPrefs,
-    clearData,
-  });
-
+  // Deliberately no register('webtime', …) here — this isn't a feature you
+  // reach for through the command palette, it's ambient context inside the
+  // Focus Guard panel. See panel-focus-guard's "Site Usage" section.
   serialize(doCycle);
 }
 
-function formatDurationShort(totalSeconds) {
-  const s = Math.max(0, Math.round(totalSeconds));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m`;
-  return `${s}s`;
-}
-
 export const handlers = {
-  'webtime:get-summary': async () => ({ ok: true, prefs: _prefs, dateStart: _meta.dateStart, ...computeSummary() }),
-  'webtime:get-prefs':   async () => ({ ok: true, prefs: _prefs }),
-  'webtime:set-prefs':   async (msg) => ({ ok: true, prefs: await setPrefs(msg.patch || {}) }),
-  'webtime:clear-data':  async (msg) => { await clearData(msg.scope || 'today'); return { ok: true }; },
-  'webtime:open':        async () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('pages/webtime.html') });
-    return { ok: true };
-  },
+  'webtime:get-usage':  async () => ({ ok: true, prefs: _prefs, ...computeUsage() }),
+  'webtime:set-prefs':  async (msg) => ({ ok: true, prefs: await setPrefs(msg.patch || {}) }),
+  'webtime:clear-data': async () => { await clearData(); return { ok: true }; },
 };
